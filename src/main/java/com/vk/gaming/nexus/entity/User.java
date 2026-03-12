@@ -1,15 +1,11 @@
 package com.vk.gaming.nexus.entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "users")
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class User {
 
     @Id
@@ -23,5 +19,18 @@ public class User {
     private String password;
 
     @Column(name = "is_online", nullable = false)
-    private boolean isOnline = false;
+    private Boolean isOnline = false; // Initialize to false by default
+
+    @Column(nullable = false)
+    private Integer wins = 0;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private UserStatus status = UserStatus.OFFLINE;
+    public enum UserStatus {
+        ONLINE,    // Sitting in the lobby
+        IN_GAME,   // Currently playing
+        OFFLINE    // Disconnected
+    }
+
 }

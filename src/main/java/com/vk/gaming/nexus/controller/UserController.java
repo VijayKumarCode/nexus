@@ -1,7 +1,9 @@
 package com.vk.gaming.nexus.controller;
 
+import com.vk.gaming.nexus.dto.AuthRequest;
 import com.vk.gaming.nexus.entity.User;
-import com.vk.gaming.nexus.servce.UserService;
+import com.vk.gaming.nexus.repository.UserRepository;
+import com.vk.gaming.nexus.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,33 +16,56 @@ import java.util.List;
 public class UserController {
 
     @Autowired
-    private UserService userService;
+    private UserRepository userRepository;
+
+    private final UserService userService;
+
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
 
     // Registers the user in PostgreSQL
     @PostMapping("/register")
-    public ResponseEntity<User> register(@RequestParam String username, @RequestParam String password) {
-        User newUser = userService.registerUser(username,password);
-        return ResponseEntity.ok(newUser);
+    public ResponseEntity<?> register(@RequestBody AuthRequest request) {
+       try {
+           User user = userService.registerUser(request);
+           return ResponseEntity.ok(user);
+       }
+       catch (RuntimeException e) {
+           return ResponseEntity.badRequest().body(e.getMessage());
+       }
+
     }
 
     // Logs the user in and flips is_online to TRUE
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestParam String username, @RequestParam String password) {
+    public ResponseEntity<?> login(@RequestBody AuthRequest request) {
         // Note: For a production app, we will add password verification here later!
-        userService.setUserOnlineStatus(username,true);
-        return ResponseEntity.ok(username + " successfully logged in and is now online.");
+        try {
+            User user = userService.loginUser(request);
+            return ResponseEntity.ok(user);
+        }
+            catch (RuntimeException e) {
+            return ResponseEntity.status(401).body(e.getMessage());
+        }
+
     }
 
     // Logs the user out and flips is_online to FALSE
-    @PostMapping("/logout")
-    public ResponseEntity<String> logout(@RequestParam String username, @RequestParam String password) {
-        userService.setUserOnlineStatus(username,false);
-        return  ResponseEntity.ok(username + "logged out" );
+    @PostMapping("/logout/{username}")
+    public ResponseEntity<?> logout(@PathVariable String username) {
+        userService.logoutUser(username);
+        return  ResponseEntity.ok(username + "Logged out successfully" );
     }
 
     // The endpoint your LobbyPanel will call to get active players
-    @GetMapping("/online")
-    public ResponseEntity<List<User>> getOnlinePlayers() {
-        return ResponseEntity.ok(userService.getOnlinePlayers());
+    @GetMapping("/lobby")
+    public ResponseEntity<List<User>> getLobby() {
+        return ResponseEntity.ok(userService.getOnlineUsers());
+    }
+
+    @GetMapping("/leaderboard")
+    public List<User> getLeaderboard() {
+        return userRepository.findTop10ByOrderByWinsDesc();
     }
 }

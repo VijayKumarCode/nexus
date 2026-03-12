@@ -7,7 +7,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update  # This creates the table if it's missing
+      ddl-auto: create  # This creates the table if it's missing
       show-sql: true      # Useful for debugging; shows the SQL in the console
       properties:
         hibernate:

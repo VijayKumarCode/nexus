@@ -8,11 +8,11 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface UserRepository extends JpaRepository<User,Long> {
-
-    // Used to check if a user exists during login
+public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsername(String username);
+    List<User> findByStatus(User.UserStatus status);
 
-    // Used by the LobbyPanel to fetch ONLY players who are currently online
-    List<User> findByIsOnlineTrue();
+    // Implementation: Spring Data JPA automatically parses this name
+    // to create: SELECT * FROM users ORDER BY wins DESC LIMIT 10
+    List<User> findTop10ByOrderByWinsDesc();
 }

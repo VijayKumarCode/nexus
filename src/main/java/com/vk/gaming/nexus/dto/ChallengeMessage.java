@@ -7,11 +7,9 @@ public class ChallengeMessage {
     private String sender;
     private String receiver;
     private String roomId; //
-    private ChallengeType type;
+    private ChallengeStatus status;
 
-    private enum ChallengeType {
-        CHALLENGE,
-        ACCEPT,
-        REJECT;
+    public enum ChallengeStatus {
+        PENDING, ACCEPTED, REJECTED, CANCELLED
     }
 }

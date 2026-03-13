@@ -6,7 +6,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <style>
-        body { font-family: 'Segue UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
         .screen { text-align: center; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 350px; }
         input { width: 80%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }
         button { width: 88%; padding: 12px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.3s; }
@@ -15,7 +15,7 @@
         .btn-danger { background: #dc3545; color: white; }
         .grid { display: grid; grid-template-columns: repeat(3, 100px); gap: 10px; margin-top: 20px; }
         .cell { width: 100px; height: 100px; background: #fff; border: 2px solid #333; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; cursor: pointer; border-radius: 10px; }
-        #status-indicator { margin-bottom: 20px; padding: 10px; border-radius: 10px; font-size: 0.9rem; width: 100%; }
+        #status-indicator { margin-bottom: 20px; padding: 10px; border-radius: 10px; font-size: 0.9rem; width: 100%; font-weight: bold; }
         .user-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
     </style>
 </head>
@@ -68,28 +68,46 @@
         <div class="cell" onclick="sendMove(8)"></div>
     </div>
     <div style="margin-top: 20px;">
-        <button onclick="sendToss()" style="width: auto; padding: 10px 20px;">Toss</button>
+        <button class="btn-primary" onclick="sendToss()" style="width: auto; padding: 10px 20px;">Toss</button>
         <button class="btn-danger" onclick="sendReset()" style="width: auto; padding: 10px 20px;">Reset</button>
     </div>
 </div>
 
 <script>
-
-    // --- 1. GLOBAL STATE ---
     let stompClient = null;
     let currentUser = "";
     let opponentUser = "";
-    let currentRoomId = ""; // FIXED: This was missing, causing ReferenceErrors
-    let isMyTurn = false;   // Tracks if the local player is allowed to click
+    let currentRoomId = "";
+    let isMyTurn = false;
     let isGameOver = false;
+    let roomSubscription = null;
 
-    const API_BASE = "http://localhost:8080/api/users";
-    const statusEl = document.getElementById('status-indicator') || document.createElement('div'); // Fallback if element doesn't exist yet
+    const API_BASE = "/api/users";
+    const statusEl = document.getElementById('status-indicator');
+
+    // --- 1. INITIALIZATION (Cleaned up duplicates) ---
+    window.onload = async function() {
+        const saved = localStorage.getItem('nexus_user');
+        if (saved) {
+            currentUser = saved;
+            try {
+                await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+                showScreen('lobby-screen');
+                connect();
+                startLobbyRefresh();
+            } catch (err) {
+                console.error("Presence sync failed:", err);
+            }
+        }
+    };
 
     // --- SCREEN NAVIGATION ---
     function showScreen(screenId) {
         document.querySelectorAll('.screen, #game-container').forEach(el => el.style.display = 'none');
         document.getElementById(screenId).style.display = 'block';
+        if (screenId === 'lobby-screen') {
+            document.getElementById(screenId).style.display = 'flex'; // Maintain flex layout for lobby
+        }
     }
 
     // --- AUTHENTICATION ---
@@ -101,7 +119,7 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username: u, password: p})
         });
-        if (res.ok) { alert("Success!"); showScreen('login-screen'); }
+        if (res.ok) { alert("Success! Please login."); showScreen('login-screen'); }
         else { alert(await res.text()); }
     }
 
@@ -122,7 +140,7 @@
         } else { alert("Login failed"); }
     }
 
-    // --- LOBBY & CHALLENGE ---
+    // --- LOBBY & LEADERBOARD ---
     function startLobbyRefresh() {
         refreshLobby();
         refreshLeaderboard();
@@ -134,102 +152,169 @@
 
     async function refreshLeaderboard() {
         try {
-            const res = await fetch('http://localhost:8080/api/users/leaderboard');
-            if (!res.ok) return; // Fails silently if endpoint isn't up yet
+            const res = await fetch(`${API_BASE}/leaderboard`);
+            if (!res.ok) return;
             const topPlayers = await res.json();
             const list = document.getElementById('leaderboard-list');
-            if(!list) return;
 
-            list.innerHTML = "";
+            let html = "";
             topPlayers.forEach((player, index) => {
-                list.innerHTML += `
+                html += `
                     <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #e9ecef;">
                         <span>${index + 1}. <strong>${player.username}</strong></span>
                         <span style="color: #28a745; font-weight: bold;">${player.wins} W</span>
                     </div>`;
             });
+            list.innerHTML = html || "<p>No ranked players yet.</p>";
         } catch (err) {
             console.error("Leaderboard fetch failed", err);
         }
     }
 
-    async function refreshLobby() {
-    if (document.getElementById('lobby-screen').style.display === 'none') return;
 
-    const res = await fetch(`${API_BASE}/lobby`);
-    const users = await res.json();
-    const list = document.getElementById('online-users-list');
-    list.innerHTML = "";
 
-    users.forEach(user => {
-        if (user.username !== currentUser) {
-            // Determine tag color based on status
-            const statusColor = user.status === "ONLINE" ? "#28a745" : "#6c757d";
-            const statusText = user.status === "ONLINE" ? "Online" : "Offline";
-
-            list.innerHTML += `
-                <div class="user-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee;">
-                    <div>
-                        <span style="font-weight: bold;">${user.username}</span>
-                        <span style="margin-left: 8px; font-size: 0.8em; padding: 2px 6px; border-radius: 10px; background: ${statusColor}; color: white;">
-                            ${statusText}
-                        </span>
-                    </div>
-                    <button class="btn-success"
-                            style="width:auto; padding:5px 10px;"
-                            ${user.status !== "ONLINE" ? "disabled style='opacity:0.5;'" : ""}
-                            onclick="sendChallenge('${user.username}')">
-                        Challenge
-                    </button>
-                </div>`;
-            }
-        });
-    }
-
+    // --- CHALLENGE LOGIC ---
     function sendChallenge(target) {
         const roomId = `${currentUser}_${target}_${Date.now()}`;
         stompClient.send("/app/challenge", {}, JSON.stringify({
             sender: currentUser,
             receiver: target,
             roomId: roomId,
-            type: "CHALLENGE"
+            status: "PENDING"
         }));
-        alert("Challenge sent!");
+        alert("Challenge sent to " + target);
     }
 
     function handleChallenge(msg) {
-        if (msg.type === "CHALLENGE") {
+        if (msg.status === "PENDING") {
             if (confirm(`${msg.sender} wants to play!`)) {
-                currentRoomId = msg.roomId;
-                opponentUser = msg.sender;
                 stompClient.send("/app/challenge/reply", {}, JSON.stringify({
-                    sender: msg.sender, receiver: currentUser, roomId: msg.roomId, type: "ACCEPT"
+                    sender: msg.sender,
+                    receiver: currentUser,
+                    roomId: msg.roomId,
+                    status: "ACCEPTED"
                 }));
-                setupGame();
+                setupGame(msg.roomId, msg.sender);
             }
-        } else if (msg.type === "ACCEPT") {
-            currentRoomId = msg.roomId;
-            opponentUser = msg.sender; // FIXED: The person who sent the ACCEPT is your opponent
-            setupGame();
+        } else if (msg.status === "ACCEPTED") {
+            setupGame(msg.roomId, msg.receiver); // Sender sets up using receiver's name
+        } else if (msg.status === "CANCELLED") {
+            alert("The challenge was cancelled.");
         }
     }
 
-    function setupGame() {
+    function setupGame(roomId, opponent) {
+        currentRoomId = roomId;
+        opponentUser = opponent;
         showScreen('game-container');
-        // Subscribe ONLY to the private room.
-        stompClient.subscribe(`/topic/game/${currentRoomId}`, m => showMoveOnBoard(JSON.parse(m.body)));
-        statusEl.innerText = `Room: ${currentRoomId} | vs ${opponentUser}`;
 
-        // Reset local game state
-        isGameOver = false;
-        isMyTurn = false;
+        // Clean up old subscriptions to avoid duplicate messages
+        if (roomSubscription) roomSubscription.unsubscribe();
+
+        // Subscribe to unified room topic for both moves and system messages
+        roomSubscription = stompClient.subscribe(`/topic/game/${currentRoomId}`, m => handleRoomMessage(JSON.parse(m.body)));
+
+        statusEl.innerText = `Room Ready | vs ${opponentUser} | Click 'Toss' to begin!`;
+        clearBoardUI();
     }
 
-    // --- GAMEPLAY MECHANICS ---
-    function sendMove(pos) {
-        if (isGameOver) return;
+   function handleRoomMessage(payload) {
+        // 1. Handle System Messages (Toss/Reset)
+        if (payload.type) {
+            if (payload.type === "GAME_RESET") {
+                clearBoardUI();
+                return; // Exit early so we don't try to process boardPosition
+            } else if (payload.type === "TOSS_RESULT") {
+                alert(payload.message);
+                if (payload.payload === currentUser) {
+                    isMyTurn = true;
+                    statusEl.innerText = "You won the toss! Your turn.";
+                } else {
+                    isMyTurn = false;
+                    statusEl.innerText = `${opponentUser} won the toss. Waiting...`;
+                }
+                return;
+            }
+        }
 
-        // FIXED: Strict Turn Enforcement
+        // 2. Handle Game Moves - Added check to ensure boardPosition is valid (0-8)
+        if (payload.boardPosition !== undefined && payload.boardPosition !== null) {
+            const cells = document.getElementsByClassName('cell');
+            const pos = parseInt(payload.boardPosition);
+
+            if (cells[pos]) {
+                cells[pos].innerText = payload.symbol;
+                cells[pos].style.color = (payload.symbol === 'X') ? '#007bff' : '#dc3545';
+
+                if (payload.gameState && payload.gameState !== "ONGOING") {
+                    isGameOver = true;
+                    statusEl.innerText = `Game Over: ${payload.gameState}`;
+                    setTimeout(() => alert("Game Over: " + payload.gameState), 100);
+                } else if (payload.playerUsername !== currentUser) {
+                    isMyTurn = true;
+                    statusEl.innerText = "Your turn!";
+                } else {
+                    statusEl.innerText = "Waiting for opponent...";
+                }
+            }
+        }
+    }
+
+    // FIXED: Lobby Refresh to prevent "Ghost Players" or empty lists
+   async function refreshLobby() {
+        const lobbyScreen = document.getElementById('lobby-screen');
+        if (lobbyScreen.style.display === 'none') return;
+
+        try {
+            const res = await fetch(`${API_BASE}/lobby`);
+            if (!res.ok) throw new Error("Lobby fetch failed");
+
+            const users = await res.json();
+            const list = document.getElementById('online-users-list');
+
+            // Clear current list entirely before rebuilding
+            list.innerHTML = "";
+
+            let otherPlayersFound = false;
+            users.forEach(user => {
+                if (user.username !== currentUser) {
+                    otherPlayersFound = true;
+                    const isBusy = user.status === "IN_GAME";
+                    const statusColor = isBusy ? "#dc3545" : (user.status === "ONLINE" ? "#28a745" : "#6c757d");
+
+                    const userDiv = document.createElement('div');
+                    userDiv.className = 'user-item';
+                    userDiv.innerHTML = `
+                        <div>
+                            <span style="font-weight: bold;">${user.username}</span>
+                            <span style="margin-left: 8px; font-size: 0.8em; padding: 2px 6px; border-radius: 10px; background: ${statusColor}; color: white;">
+                                ${user.status}
+                            </span>
+                        </div>
+                        <button class="btn-success"
+                                style="width:auto; padding:5px 10px;"
+                                ${(user.status !== "ONLINE" || isBusy) ? "disabled style='opacity:0.5;'" : ""}
+                                onclick="sendChallenge('${user.username}')">
+                            Challenge
+                        </button>`;
+                    list.appendChild(userDiv);
+                }
+            });
+
+            if (!otherPlayersFound) {
+                list.innerHTML = "<p>No other players online.</p>";
+            }
+        } catch (err) {
+            console.error("Lobby refresh error:", err);
+        }
+   }
+
+    // --- GAMEPLAY MECHANICS ---
+   function sendMove(pos) {
+        if (isGameOver) {
+            alert("Game is over. Click Reset to play again.");
+            return;
+        }
         if (!isMyTurn) {
             console.warn("It's not your turn!");
             return;
@@ -242,76 +327,46 @@
         };
 
         stompClient.send(`/app/move/${currentRoomId}`, {}, JSON.stringify(move));
-        isMyTurn = false; // Lock the board immediately after clicking
-    }
+        isMyTurn = false;
+   }
 
-    function showMoveOnBoard(move) {
-        const cells = document.getElementsByClassName('cell');
-        cells[move.boardPosition].innerText = move.symbol;
-
-        if (move.gameState && move.gameState !== "ONGOING") {
-            isGameOver = true;
-            alert("Game Over: " + move.gameState);
-        } else {
-            // FIXED: If it's ongoing, unlock the board for the *other* player
-            if (move.playerUsername !== currentUser) {
-                isMyTurn = true;
-            }
+    function sendToss() {
+        if (currentRoomId) {
+            stompClient.send(`/app/toss/${currentRoomId}`, {}, JSON.stringify({playerOne: currentUser, playerTwo: opponentUser}));
         }
     }
 
-    // --- WEBSOCKETS ---
-    function connect() {
-        const socket = new SockJS('/game-websocket');
-        stompClient = Stomp.over(socket);
-        stompClient.connect({}, function() {
-            stompClient.subscribe('/topic/challenges/' + currentUser, m => handleChallenge(JSON.parse(m.body)));
+    function sendReset() {
+        if (currentRoomId) {
+            stompClient.send(`/app/reset/${currentRoomId}`, {}, {});
+        }
+    }
 
-            // REMOVED: Global '/topic/game' subscription to prevent double-moves
-            // stompClient.subscribe('/topic/game', m => showMoveOnBoard(JSON.parse(m.body)));
-
-            stompClient.subscribe('/topic/game.system', m => handleSystemMsg(JSON.parse(m.body)));
+    function clearBoardUI() {
+        isGameOver = false;
+        isMyTurn = false;
+        statusEl.innerText = "Board cleared. Toss to see who goes first!";
+        Array.from(document.getElementsByClassName('cell')).forEach(c => {
+            c.innerText = "";
+            c.style.color = "";
         });
     }
 
-    function handleSystemMsg(msg) {
-        if (msg.type === "TOSS_RESULT") {
-            alert(msg.message);
-            // FIXED: Unlock the board only for the player who won the toss
-            if (msg.payload === currentUser) {
-                isMyTurn = true;
-            }
-        }
-        if (msg.type === "GAME_RESET") resetUI();
+    // --- CONNECTION ---
+    function connect() {
+        const socket = new SockJS('/game-websocket');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({'user': currentUser}, function() {
+            // Only subscribe to personal challenges queue globally
+            stompClient.subscribe('/topic/challenges/' + currentUser, m => handleChallenge(JSON.parse(m.body)));
+        });
     }
-
-    function resetUI() {
-        isGameOver = false;
-        isMyTurn = false; // Wait for a new toss to decide who starts
-        Array.from(document.getElementsByClassName('cell')).forEach(c => c.innerText = "");
-    }
-
-    function sendToss() {
-        stompClient.send("/app/toss", {}, JSON.stringify({playerOne: currentUser, playerTwo: opponentUser}));
-    }
-
-    function sendReset() { stompClient.send("/app/reset", {}, {}); }
 
     async function logout() {
         await fetch(`${API_BASE}/logout/${currentUser}`, {method: 'POST'});
         localStorage.removeItem('nexus_user');
         location.reload();
     }
-
-    window.onload = () => {
-        const saved = localStorage.getItem('nexus_user');
-        if (saved) {
-            currentUser = saved;
-            showScreen('lobby-screen');
-            connect();
-            startLobbyRefresh();
-        }
-    };
 </script>
 </body>
 </html>

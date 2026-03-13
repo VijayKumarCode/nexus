@@ -1,15 +1,20 @@
+/**
+ * Problem No. #143
+ * Difficulty: Medium
+ * Description: Nexus Game Controller with Persistence and Room Isolation
+ * Link: https://github.com/VijayKumarCode/Nexus
+ * Time Complexity: O(1)
+ * Space Complexity: O(1)
+ */
 package com.vk.gaming.nexus.controller;
 
-import com.vk.gaming.nexus.dto.ChallengeMessage;
-import com.vk.gaming.nexus.dto.GameMove;
-import com.vk.gaming.nexus.dto.GameSystemMessage;
-import com.vk.gaming.nexus.dto.TossRequest;
+import com.vk.gaming.nexus.dto.*;
+import com.vk.gaming.nexus.service.ChallengeService;
 import com.vk.gaming.nexus.service.GameService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
@@ -19,53 +24,51 @@ import org.springframework.stereotype.Controller;
 public class GameController {
 
     private final SimpMessagingTemplate messagingTemplate;
-    private final GameService gameService; // Injected service
+    private final ChallengeService challengeService;
+    private final GameService gameService;
 
     @MessageMapping("/challenge")
     public void sendChallenge(ChallengeMessage message) {
+        log.info("Challenge sent from {} to {}", message.getSender(), message.getReceiver());
+        // IMPROVEMENT: Persist the challenge in PostgreSQL as PENDING
+        challengeService.createChallenge(message);
         messagingTemplate.convertAndSend("/topic/challenges/" + message.getReceiver(), message);
     }
 
     @MessageMapping("/challenge/reply")
     public void replyChallenge(ChallengeMessage message) {
+        log.info("Challenge reply from {}: {}", message.getReceiver(), message.getStatus());
+        if (ChallengeMessage.ChallengeStatus.ACCEPTED.equals(message.getStatus())) {
+            challengeService.acceptChallenge(message);
+        }
         messagingTemplate.convertAndSend("/topic/challenges/" + message.getSender(), message);
     }
 
-    @MessageMapping("/toss")
-    @SendTo("/topic/game.system")
-    public GameSystemMessage handleToss(TossRequest request) {
-        log.info("Processing toss request between {} and {}", request.getPlayerOne(), request.getPlayerTwo());
-        return gameService.processToss(request);
+    @MessageMapping("/toss/{roomId}")
+    public void handleToss(@DestinationVariable String roomId, TossRequest request) {
+        log.info("Processing toss for room: {}", roomId);
+        GameSystemMessage result = gameService.processToss(request);
+        // IMPROVEMENT: Isolated broadcast to specific room
+        messagingTemplate.convertAndSend("/topic/game/" + roomId, result);
     }
 
-    @MessageMapping("/pass")
-    @SendTo("/topic/game.system")
-    public GameSystemMessage handlePass(String passingPlayer) {
-        log.info("Player {} is passing the turn", passingPlayer);
-        return gameService.processPass(passingPlayer);
-    }
-
-    // Listens for moves sent to /app/move/{roomId}
     @MessageMapping("/move/{roomId}")
     public void handleGameMove(@DestinationVariable String roomId, GameMove incomingMove) {
-
-        // Process and validate the move in the service layer
         GameMove processedMove = gameService.processGameMove(incomingMove);
-
-        // If the move is valid (not null), broadcast it to the specific room topic
         if (processedMove != null) {
             messagingTemplate.convertAndSend("/topic/game/" + roomId, processedMove);
         }
     }
 
-    @MessageMapping("/reset")
-    @SendTo("/topic/game.system") // Broadcast to the system channel
-    public GameSystemMessage handleReset() {
-        gameService.resetGame();
+    @MessageMapping("/reset/{roomId}")
+    public void handleReset(@DestinationVariable String roomId) {
+        log.info("Resetting board for room: {}", roomId);
+        gameService.resetGame(roomId);
 
         GameSystemMessage message = new GameSystemMessage();
         message.setType("GAME_RESET");
         message.setMessage("The board has been cleared. New game started!");
-        return message;
+
+        messagingTemplate.convertAndSend("/topic/game/" + roomId, message);
     }
 }

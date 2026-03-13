@@ -1,9 +1,4 @@
-/**
- * Project: Nexus Multiplayer
- * Description: Real-time game logic service handling moves, win detection, and toss mechanics.
- * Time Complexity: O(1) for move processing (fixed win-pattern check)
- * Space Complexity: O(1) (fixed 3x3 grid size)
- */
+
 package com.vk.gaming.nexus.service;
 
 import com.vk.gaming.nexus.dto.GameMove;
@@ -31,21 +26,17 @@ public class GameService {
     public GameMove processGameMove(GameMove incomingMove) {
         String rId = incomingMove.getRoomId();
 
-        // 1. FIXED: Use the room-aware existence check
         if (gameMoveRepository.existsByRoomIdAndBoardPosition(rId, incomingMove.getBoardPosition())) {
             log.warn("Position occupied in room {}", rId);
             return null;
         }
 
-        // 2. FIXED: Use the room-aware top move check
         Optional<GameMoveEntity> lastMove = gameMoveRepository.findTopByRoomIdOrderByCreateDateDesc(rId);
 
-        // Validate turn logic...
         if (lastMove.isPresent() && lastMove.get().getPlayerUsername().equals(incomingMove.getPlayerUsername())) {
             return null;
         }
 
-        // 3. Logic to determine symbol...
         String symbol = (lastMove.isPresent() && "X".equals(lastMove.get().getSymbol())) ? "O" : "X";
 
         GameMoveEntity entity = new GameMoveEntity();
@@ -54,17 +45,18 @@ public class GameService {
         entity.setPlayerUsername(incomingMove.getPlayerUsername());
         entity.setSymbol(symbol);
 
-        // 4. Save and check state...
         GameMoveEntity saved = gameMoveRepository.save(entity);
-        saved.setGameState(checkGameState(rId)); // Ensure checkGameState is also room-aware
+        saved.setGameState(checkGameState(rId));
 
         return mapToDto(gameMoveRepository.save(saved));
     }
 
     private String checkGameState(String rId) {
-        List<GameMoveEntity> allMoves = gameMoveRepository.findAll();
+        // FIXED: Only fetch moves for the isolated room, not the entire database
+        List<GameMoveEntity> roomMoves = gameMoveRepository.findByRoomId(rId);
         String[] board = new String[9];
-        for (GameMoveEntity m : allMoves) {
+
+        for (GameMoveEntity m : roomMoves) {
             board[m.getBoardPosition()] = m.getSymbol();
         }
 
@@ -80,13 +72,14 @@ public class GameService {
             }
         }
 
-        return allMoves.size() == 9 ? "DRAW" : "ONGOING";
+        return roomMoves.size() == 9 ? "DRAW" : "ONGOING";
     }
 
     @Transactional
-    public void resetGame() {
-        log.info("Resetting game: Clearing all moves from the database.");
-        gameMoveRepository.deleteAll();
+    public void resetGame(String roomId) {
+        // FIXED: Only delete moves for the specific room ID
+        log.info("Resetting game for room: {}", roomId);
+        gameMoveRepository.deleteByRoomId(roomId);
     }
 
     public GameSystemMessage processToss(TossRequest request) {
@@ -106,6 +99,7 @@ public class GameService {
         dto.setPlayerUsername(entity.getPlayerUsername());
         dto.setSymbol(entity.getSymbol());
         dto.setGameState(entity.getGameState());
+        dto.setRoomId(entity.getRoomId()); // Ensure room ID is mapped back for the frontend
         return dto;
     }
 
@@ -124,4 +118,5 @@ public class GameService {
 
         return response;
     }
+
 }

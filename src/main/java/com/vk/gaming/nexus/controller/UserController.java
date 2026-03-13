@@ -51,6 +51,16 @@ public class UserController {
 
     }
 
+    @PostMapping("/sync")
+    public ResponseEntity<?> syncPresence(@RequestParam String username) {
+        userRepository.findByUsername(username).ifPresent(u -> {
+            u.setStatus(User.UserStatus.ONLINE);
+            u.setIsOnline(true);
+            userRepository.save(u);
+        });
+        return ResponseEntity.ok().build();
+    }
+
     // Logs the user out and flips is_online to FALSE
     @PostMapping("/logout/{username}")
     public ResponseEntity<?> logout(@PathVariable String username) {

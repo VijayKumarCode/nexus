@@ -13,9 +13,13 @@ public interface GameMoveRepository extends JpaRepository<GameMoveEntity, Long> 
 
     List<GameMoveEntity> findByRoomIdOrderByCreateDateAsc(String roomId);
 
-    // FIXED: Now finds the recent move FOR A SPECIFIC ROOM
-    Optional<GameMoveEntity> findTopByRoomIdOrderByCreateDateDesc(String roomId);
+    // ADDED: For fetching moves strictly isolated to a specific room
+    List<GameMoveEntity> findByRoomId(String roomId);
 
-    // FIXED: Now checks if a cell is occupied WITHIN A SPECIFIC ROOM
+    // ADDED: For resetting ONLY the specific room's board
+    void deleteByRoomId(String roomId);
+
+    // Existing methods
+    Optional<GameMoveEntity> findTopByRoomIdOrderByCreateDateDesc(String roomId);
     boolean existsByRoomIdAndBoardPosition(String roomId, int boardPosition);
 }

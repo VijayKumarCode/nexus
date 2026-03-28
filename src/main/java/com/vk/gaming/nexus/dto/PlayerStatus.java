@@ -1,5 +1,3 @@
-package com.vk.gaming.nexus.dto;
-
 /**
  * Problem No. #145
  * Difficulty: Easy
@@ -8,6 +6,8 @@ package com.vk.gaming.nexus.dto;
  * Time Complexity: O(1)
  * Space Complexity: O(1)
  */
+
+package com.vk.gaming.nexus.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;

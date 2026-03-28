@@ -1,33 +1,72 @@
-/**
- * Problem No. #143
- * Difficulty: Hard
- * Description: Corrected JPQL type-safety issues for Enum cancellation updates
- * Link: https://github.com/VijayKumarCode/Nexus
- * Time Complexity: O(n)
- * Space Complexity: O(1)
- */
 package com.vk.gaming.nexus.repository;
 
+import com.vk.gaming.nexus.dto.ChallengeStatus;
 import com.vk.gaming.nexus.model.ChallengeEntity;
-import com.vk.gaming.nexus.dto.ChallengeMessage;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
-@Repository
 public interface ChallengeRepository extends JpaRepository<ChallengeEntity, Long> {
-    Optional<ChallengeEntity> findByRoomId(String roomId);
 
+    // ========================= BASIC =========================
+    // ✅ Gets most recent one, ignores stale duplicates
+    Optional<ChallengeEntity> findTopByRoomIdOrderByCreatedAtDesc(String roomId);
+
+    void deleteByRoomId(String roomId);
+
+    // ========================= FIND =========================
+    @Query("""
+        SELECT c FROM ChallengeEntity c
+        WHERE (c.sender = :username OR c.receiver = :username)
+        AND c.status = :status
+    """)
+    List<ChallengeEntity> findPendingByUser(@Param("username") String username,
+                                            @Param("status") ChallengeStatus status);
+
+    // ========================= BULK CANCEL USER =========================
     @Modifying
-    @Query("UPDATE ChallengeEntity c SET c.status = :cancelledStatus " +
-            "WHERE (c.sender = :username OR c.receiver = :username) " +
-            "AND c.status = :pendingStatus AND c.roomId <> :activeRoomId")
-    void cancelAllOtherPendingChallenges(@Param("username") String username,
-                                         @Param("activeRoomId") String activeRoomId,
-                                         @Param("cancelledStatus") ChallengeMessage.ChallengeStatus cancelledStatus,
-                                         @Param("pendingStatus") ChallengeMessage.ChallengeStatus pendingStatus);
+    @Query("""
+        UPDATE ChallengeEntity c
+        SET c.status = :cancelled
+        WHERE (c.sender = :username OR c.receiver = :username)
+        AND c.status = :pending
+    """)
+    int cancelAllPendingForUser(@Param("username") String username,
+                                @Param("cancelled") ChallengeStatus cancelled,
+                                @Param("pending") ChallengeStatus pending);
+
+    // ========================= AUTO EXPIRY =========================
+    @Modifying
+    @Query("""
+        UPDATE ChallengeEntity c
+        SET c.status = :cancelled
+        WHERE c.status = :pending
+        AND c.expiresAt < :now
+    """)
+    int cancelExpiredChallenges(@Param("now") LocalDateTime now,
+                                @Param("cancelled") ChallengeStatus cancelled,
+                                @Param("pending") ChallengeStatus pending);
+
+    // 🔥 CORRECT METHOD (replaces createdAt version)
+    List<ChallengeEntity> findByStatusAndExpiresAtBefore(
+            ChallengeStatus status,
+            LocalDateTime now
+    );
+
+    // ========================= CANCEL OTHERS =========================
+    @Modifying
+    @Query("""
+        UPDATE ChallengeEntity c
+        SET c.status = :cancelled
+        WHERE c.sender = :username
+        AND c.roomId != :roomId
+        AND c.status = :pending
+    """)
+    int cancelOtherPending(@Param("username") String username,
+                           @Param("roomId") String roomId,
+                           @Param("cancelled") ChallengeStatus cancelled,
+                           @Param("pending") ChallengeStatus pending);
 }

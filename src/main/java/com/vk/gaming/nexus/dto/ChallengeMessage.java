@@ -15,14 +15,8 @@ public class ChallengeMessage {
     private String sender;
     private String receiver;
     private String roomId;
+
     private ChallengeStatus status;
     private MessageType type;
 
-    public enum ChallengeStatus {
-        PENDING, ACCEPTED, REJECTED, CANCELLED
-    }
-
-    public enum MessageType {
-        GAME_ABORTED, CHALLENGE_REQUEST, CHALLENGE_RESPONSE
-    }
 }

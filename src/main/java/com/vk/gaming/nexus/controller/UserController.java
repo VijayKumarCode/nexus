@@ -1,28 +1,35 @@
+/**
+ * Problem No. #196
+ * Difficulty: Medium
+ * Description: Cleaned up UserController mappings and standardized exception handling.
+ * Link: https://github.com/VijayKumarCode/Nexus
+ * Time Complexity: O(1) per endpoint
+ * Space Complexity: O(1)
+ */
 package com.vk.gaming.nexus.controller;
 
 import com.vk.gaming.nexus.dto.AuthRequest;
+import com.vk.gaming.nexus.dto.EmailRequest;
 import com.vk.gaming.nexus.dto.PlayerStatus;
 import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.repository.UserRepository;
 import com.vk.gaming.nexus.service.UserService;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/users")
-@RequiredArgsConstructor // Automatically handles all 'private final' fields
-@CrossOrigin(origins = "*")
-@EnableScheduling
+@RequiredArgsConstructor
 public class UserController {
 
-    // FIXED: Removed @Autowired and made this final to enforce Constructor Injection
+    private static final Logger log = LoggerFactory.getLogger(UserController.class);
+
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final UserService userService;
@@ -32,90 +39,74 @@ public class UserController {
         try {
             User user = userService.registerUser(request);
             return ResponseEntity.ok(user);
+        } catch (RuntimeException e) {
+            // Returns a JSON-friendly error instead of raw text, easier for frontend to parse
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
         }
-        catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+    }
+
+    @GetMapping("/activate")
+    public ResponseEntity<?> activateAccount(@RequestParam String token) {
+        return userRepository.findByActivationToken(token)
+                .map(user -> {
+                    user.setEnabled(true);
+                    user.setActivationToken(null);
+                    userRepository.save(user);
+                    // Returning HTML or a redirect is usually better here so the user isn't staring at raw JSON
+                    return ResponseEntity.ok(java.util.Map.of("message", "Account activated successfully!"));
+                })
+                .orElse(ResponseEntity.badRequest().body(java.util.Map.of("error", "Invalid or expired link.")));
+    }
+
+    @PostMapping("/resend-activation")
+    public ResponseEntity<?> resendActivation(@RequestBody EmailRequest request) {
+        userService.resendActivationLink(request.getEmail());
+        return ResponseEntity.ok(java.util.Map.of("message", "Activation link resent."));
     }
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody AuthRequest request) {
         try {
             User user = userService.loginUser(request);
-            // FIXED: Broadcast the ONLINE status immediately upon login
-            messagingTemplate.convertAndSend("/topic/lobby.status",
-                    new PlayerStatus(user.getUsername(), "ONLINE"));
+            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(user.getUsername(), "ONLINE"));
             return ResponseEntity.ok(user);
         } catch (RuntimeException e) {
-            return ResponseEntity.status(401).body(e.getMessage());
+            return ResponseEntity.status(401).body(java.util.Map.of("error", e.getMessage()));
         }
     }
 
     @PostMapping("/logout/{username}")
     public ResponseEntity<?> logout(@PathVariable String username) {
         userService.logoutUser(username);
-        // FIXED: Broadcast the OFFLINE status to immediately remove them from other screens
-        messagingTemplate.convertAndSend("/topic/lobby.status",
-                new PlayerStatus(username, "OFFLINE"));
-        return ResponseEntity.ok(username + " logged out successfully");
+        messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, "OFFLINE"));
+        return ResponseEntity.ok(java.util.Map.of("message", username + " logged out"));
     }
 
-
-    @RequestMapping(value = "/sync", method = {RequestMethod.GET, RequestMethod.POST})
-    public ResponseEntity<?> syncPresence(@RequestParam String username) {
-        userRepository.findByUsername(username).ifPresent(u -> {
-            u.setStatus(User.UserStatus.ONLINE);
-            u.setIsOnline(true);
-            userRepository.save(u);
-            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, "ONLINE"));
-        });
+    // Changed to @PostMapping. Having an endpoint respond to state changes via GET is against REST principles.
+    @PostMapping("/sync")
+    public ResponseEntity<Void> syncPresence(@RequestParam String username) {
+        userService.syncUserPresence(username);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/heartbeat")
-    public void heartbeat(@RequestParam String username) {
+    public ResponseEntity<Void> heartbeat(@RequestParam String username) {
         userService.heartbeat(username);
+        return ResponseEntity.ok().build();
     }
 
     @GetMapping("/lobby")
-    public List<User> getLobby() {
-        return userService.getAllUsers();
+    public ResponseEntity<List<User>> getLobby() {
+        return ResponseEntity.ok(userService.getOnlineUsers());
     }
 
-    @Scheduled(fixedRate = 10000)
-    @Transactional
-    public void updateIdleUsers() {
-        long now = System.currentTimeMillis();
-
-        userRepository.findAll().forEach(user -> {
-            // FIXED 1: Skip users who are already OFFLINE to prevent "Offline Resurrection"
-            if (user.getStatus() == User.UserStatus.OFFLINE) return;
-
-            long lastSeen = user.getLastSeen() != null ? user.getLastSeen() : 0;
-            long timeSinceLastSeen = now - lastSeen;
-
-            // FIXED 2: Ghost Session Cleanup (User closed tab while IN_GAME)
-            // If no heartbeat for > 2 minutes, forcefully log them out of PostgreSQL
-            if (timeSinceLastSeen > 120000) {
-                user.setStatus(User.UserStatus.OFFLINE);
-                user.setIsOnline(false);
-                userRepository.save(user);
-                return;
-            }
-
-            // If user is actively IN_GAME and hasn't timed out, leave them alone
-            if (user.getStatus() == User.UserStatus.IN_GAME) return;
-
-            // Standard IDLE logic: Set to IDLE after 60 seconds of no heartbeat
-            if (timeSinceLastSeen > 60000 && user.getStatus() != User.UserStatus.IDLE) {
-                user.setStatus(User.UserStatus.IDLE);
-                userRepository.save(user); // FIXED: Added explicit save for safety
-            }
-        });
+    @GetMapping("/check-username")
+    public ResponseEntity<Boolean> checkUsername(@RequestParam String username) {
+        return ResponseEntity.ok(userService.isUsernameAvailable(username));
     }
 
     @GetMapping("/leaderboard")
-    public List<User> getLeaderboard() {
-        return userRepository.findTop10ByOrderByWinsDesc();
+    public ResponseEntity<List<User>> getLeaderboard() {
+        return ResponseEntity.ok(userRepository.findTop10ByOrderByWinsDesc());
     }
 }

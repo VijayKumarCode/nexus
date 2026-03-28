@@ -8,10 +8,7 @@
  */
 package com.vk.gaming.nexus.controller;
 
-import com.vk.gaming.nexus.dto.ChallengeMessage;
-import com.vk.gaming.nexus.dto.GameMove;
-import com.vk.gaming.nexus.dto.GameSystemMessage;
-import com.vk.gaming.nexus.dto.TossRequest;
+import com.vk.gaming.nexus.dto.*;
 import com.vk.gaming.nexus.service.ChallengeService;
 import com.vk.gaming.nexus.service.GameService;
 import lombok.RequiredArgsConstructor;
@@ -42,16 +39,18 @@ public class GameController {
     public void handleChallengeReply(@Payload ChallengeMessage message) {
         log.info("Challenge reply: {} -> {} | Status: {}", message.getReceiver(), message.getSender(), message.getStatus());
 
-        // Process DB updates and Lobby broadcasts
-        challengeService.respondToChallenge(message);
+        // ✅ Clean ALL stale game data before starting fresh game
+        if (message.getStatus() == ChallengeStatus.ACCEPTED) {
+            gameService.resetGame(message.getRoomId());
+        }
 
-        // FIXED: Send the response back to the CHALLENGER's personal topic
-        // This triggers the setupGame() function on the challenger's side
-        messagingTemplate.convertAndSend("/topic/challenges/" + message.getSender(), message);
+        challengeService.respondToChallenge(message);
+        messagingTemplate.convertAndSend("/topic/challenges/" + message.getReceiver(), message);
     }
 
     @MessageMapping("/toss/{roomId}")
-    public void handleToss(@DestinationVariable String roomId, TossRequest request) {
+    public void handleToss(@DestinationVariable String roomId, @Payload TossRequest request) {
+        request.setRoomId(roomId);
         GameSystemMessage result = gameService.processToss(request);
         messagingTemplate.convertAndSend("/topic/game/" + roomId, result);
     }
@@ -68,19 +67,30 @@ public class GameController {
     public void handleReset(@DestinationVariable String roomId) {
         log.info("Resetting board for room: {}", roomId);
         gameService.resetGame(roomId);
-        GameSystemMessage message = new GameSystemMessage();
-        message.setType("GAME_RESET");
-        message.setMessage("The board has been cleared. New game started!");
-        messagingTemplate.convertAndSend("/topic/game/" + roomId, message);
+
+        GameSystemMessage reset = new GameSystemMessage();
+        reset.setType("GAME_RESET");
+        reset.setMessage("The board has been cleared. New game started!");
+        messagingTemplate.convertAndSend("/topic/game/" + roomId, reset);
+
     }
 
     @MessageMapping("/game.abort")
     public void handleAbort(@Payload ChallengeMessage message) {
         log.info("Game aborted in room: {} by {}", message.getRoomId(), message.getSender());
         gameService.markPlayersOnlineByRoom(message.getRoomId());
-        message.setType(ChallengeMessage.MessageType.GAME_ABORTED);
-        message.setStatus(ChallengeMessage.ChallengeStatus.CANCELLED);
+        message.setType(MessageType.GAME_ABORTED);
+        message.setStatus(ChallengeStatus.CANCELLED);
         messagingTemplate.convertAndSend("/topic/game/" + message.getRoomId(), message);
+
+        // ✅ Broadcast ONLINE status to lobby for both players
+        String[] parts = message.getRoomId().split("_");
+        if (parts.length >= 2) {
+            messagingTemplate.convertAndSend("/topic/lobby.status",
+                    new PlayerStatus(parts[0], "ONLINE"));
+            messagingTemplate.convertAndSend("/topic/lobby.status",
+                    new PlayerStatus(parts[1], "ONLINE"));
+        }
     }
 
     @MessageMapping("/toss/decision/{roomId}")
@@ -91,7 +101,7 @@ public class GameController {
                 roomId,
                 msg.getWinner(),
                 msg.getLoser(),
-                msg.getMessage()
+                msg.getPayload()   // ✅ correct
         );
 
         messagingTemplate.convertAndSend("/topic/game/" + roomId, response);

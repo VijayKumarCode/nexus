@@ -6,11 +6,21 @@
  * Time Complexity: O(1)
  * Space Complexity: O(1)
  */
+/*
+ * Problem No. #174
+ * Difficulty: Medium
+ * Description: Refactored ChallengeEntity to replace @Data with specific Lombok annotations for JPA safety
+ * Link: https://github.com/VijayKumarCode/Nexus
+ * Time Complexity: O(1)
+ * Space Complexity: O(1)
+ */
 package com.vk.gaming.nexus.model;
 
-import com.vk.gaming.nexus.dto.ChallengeMessage;
+import com.vk.gaming.nexus.dto.ChallengeStatus;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -21,6 +31,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ChallengeEntity {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -30,8 +41,11 @@ public class ChallengeEntity {
     private String roomId;
 
     @Enumerated(EnumType.STRING)
-    private ChallengeMessage.ChallengeStatus status;
+    private ChallengeStatus status;
 
-    @Builder.Default
-    private LocalDateTime createdAt = LocalDateTime.now();
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
 }

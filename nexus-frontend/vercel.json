@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "builds": [
+    { "src": "nexus.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "/nexus.html" }
+  ]
+}

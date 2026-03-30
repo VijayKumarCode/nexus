@@ -24,7 +24,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByStatus(User.UserStatus status);
 
-    List<User> findTop10ByOrderByWinsDesc();
+    @Query("SELECT u FROM User u WHERE (u.wins + u.losses) > 0 ORDER BY u.wins DESC LIMIT 10")
+    List<User> findTop10ActivePlayers();
 
     // 🔥 PERFORMANCE: Bulk offline update
     @Modifying

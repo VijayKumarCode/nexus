@@ -83,7 +83,9 @@ public class OtpService {
     }
 
     public void sendActivationLink(String email, String token) {
-        String activationUrl = appConfig.getBaseUrl() + "/api/users/activate?token=" + token;
+        log.info(">>> BASE URL FROM CONFIG = {}", appConfig.getBaseUrl());
+        String activationUrl = appConfig.getBaseUrl() + "/api/users/activate?token=" + token
+                + "&ngrok-skip-browser-warning=true";
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom("vkumar.kumar31@gmail.com");

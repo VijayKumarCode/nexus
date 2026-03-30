@@ -22,6 +22,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/users")
@@ -107,6 +108,15 @@ public class UserController {
 
     @GetMapping("/leaderboard")
     public ResponseEntity<List<User>> getLeaderboard() {
-        return ResponseEntity.ok(userRepository.findTop10ByOrderByWinsDesc());
+        return ResponseEntity.ok(userRepository.findTop10ActivePlayers());
+    }
+
+    @GetMapping("/health")
+    public ResponseEntity<Map<String, String>> health() {
+        return ResponseEntity.ok(Map.of(
+                "status", "UP",
+                "app", "Nexus Multiplayer Arena",
+                "version", "1.0"
+        ));
     }
 }

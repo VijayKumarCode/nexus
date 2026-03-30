@@ -1,3 +1,4 @@
+<!--
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -237,7 +238,7 @@
         <h2 id="toss-result-title" class="fw-bold mb-2">You Won! 🎉</h2>
         <p id="toss-result-desc" class="text-muted mb-4">Choose your preference</p>
 
-        <!-- ✅ Winner sees this -->
+
         <div id="toss-winner-section" style="display:none;">
             <p class="text-success fw-bold mb-3">You won the toss! Pick your side:</p>
             <div class="d-flex gap-3 justify-content-center">
@@ -252,7 +253,7 @@
             </div>
         </div>
 
-        <!-- ✅ Loser sees this — clean waiting state, no buttons -->
+
         <div id="toss-loser-section" style="display:none;">
             <div class="d-flex align-items-center justify-content-center gap-2 mt-2">
                 <div class="spinner-border spinner-border-sm text-warning" role="status"></div>
@@ -291,7 +292,6 @@
     let lobbyInterval = null;
     let leaderboardInterval = null;
     let tossSubmitted = false;
-    let isConnecting = false;
 
     function showToast(message, type = "info") {
         const container = document.getElementById('toast-container');
@@ -567,12 +567,33 @@
             const players = await res.json();
             const list = document.getElementById('leaderboard-list');
             list.innerHTML = '';
-            players.forEach(player => {
+            players.forEach((player, index) => {
+                const medals = ['🥇','🥈','🥉'];
+                const medal = medals[index] || `#${index + 1}`;
+                const winRate = (player.wins + player.losses) > 0
+                    ? Math.round((player.wins / (player.wins + player.losses)) * 100)
+                    : 0;
+
                 list.innerHTML += `
-                    <div class="d-flex justify-content-between align-items-center bg-white p-2 rounded shadow-sm border">
-                        <span class="fw-bold text-dark">${player.username}</span>
-                        <span class="badge bg-warning text-dark px-3 py-2 rounded-pill">${player.wins || 0} Wins</span>
-                    </div>`;
+        <div class="d-flex justify-content-between align-items-center bg-white p-2 rounded shadow-sm border mb-1">
+            <div class="d-flex align-items-center gap-2">
+                <span style="font-size:1.2rem;">${medal}</span>
+                <div>
+                    <div class="fw-bold text-dark" style="font-size:0.9rem;">${player.username}</div>
+                    <div style="font-size:0.72rem; color:#6b7280;">
+                        ${player.fullName || 'Nexus Player'}
+                    </div>
+                </div>
+            </div>
+            <div class="text-end">
+                <div style="font-size:0.78rem;">
+                    <span class="text-success fw-bold">${player.wins || 0}W</span>
+                    <span class="text-muted mx-1">/</span>
+                    <span class="text-danger fw-bold">${player.losses || 0}L</span>
+                </div>
+                <div style="font-size:0.7rem; color:#6b7280;">${winRate}% win rate</div>
+            </div>
+        </div>`;
             });
         } catch (e) { console.error("Leaderboard failed", e); }
     }
@@ -1029,3 +1050,4 @@ function showWinnerModal(state) {
 </script>
 </body>
 </html>
+--!>

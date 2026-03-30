@@ -105,7 +105,12 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         // Allows requests from any origin (your frontend)
-        configuration.setAllowedOriginPatterns(List.of("*"));
+        configuration.setAllowedOriginPatterns(List.of(
+                "http://localhost:8080",
+                "http://localhost:5500",
+                "https://*.vercel.app",
+                "https://*.up.railway.app"
+        ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         // Required for WebSockets/SockJS to work

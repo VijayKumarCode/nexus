@@ -9,7 +9,7 @@
 		<relativePath/>
 	</parent>
 	<groupId>com.vk.gaming</groupId>
-	<artifactId>nexus</artifactId>
+	<artifactId>nexus-backend</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>nexus</name>
 	<description>Industry-standard real-time multiplayer gaming server with WebSocket support and PostgreSQL persistence.</description>

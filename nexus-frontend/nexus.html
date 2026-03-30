@@ -1431,11 +1431,12 @@
     let isConnected = false;
     let selectedStar = 0;
 
-    const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    const BACKEND_URL = (window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1')
         ? ''
         : 'https://PLACEHOLDER_RAILWAY_URL';
 
-    const API_BASE = BACKEND_URL + '/api/users';
+    const API_BASE    = BACKEND_URL + '/api/users';
     const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 
     const statusEl = () => document.getElementById('status-indicator');

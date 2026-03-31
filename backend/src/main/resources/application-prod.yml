@@ -6,10 +6,10 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   mail:
-    host: smtp.gmail.com
+    host: smtp.resend.com
     port: 587
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    username: resend
+    password: ${RESEND_API_KEY}
     properties:
       mail:
         smtp:
@@ -17,13 +17,13 @@ spring:
           starttls:
             enable: true
           ssl:
-            trust: smtp.gmail.com
-        debug: false
+            trust: smtp.resend.com
+        debug: false # Set to true if email sending needs to be actively troubleshot
 
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none
+      ddl-auto: update # Switch to 'none' after tables are created on the live database!
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
@@ -36,3 +36,6 @@ app:
 
 server:
   port: ${PORT:8080}
+
+cors:
+  allowed-origin: ${FRONTEND_URL:https://nexusgame.space}

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!--<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1015,17 +1015,16 @@
 <div class="bg-grid"></div>
 <div id="toast-container"></div>
 
-<!-- ════ FEEDBACK FAB ════ -->
 <button id="feedback-fab" onclick="document.getElementById('feedback-modal').style.display='flex'" title="Send Feedback">💬</button>
 
-<!-- ════ HOME SCREEN ════ -->
+
 <div class="page-wrapper">
 <div id="home-screen" class="screen">
     <div class="home-hero">
         <div class="nexus-wordmark">NEXUS</div>
         <div class="nexus-tagline">Multiplayer Arena &nbsp;·&nbsp; v1.0</div>
 
-        <!-- animated preview board -->
+
         <div class="hero-board" id="hero-board-el">
             <div class="hero-cell x" style="--d:0.1s">✕</div>
             <div class="hero-cell empty"></div>
@@ -1039,7 +1038,7 @@
         </div>
     </div>
 
-    <!-- mode selection -->
+
     <div class="mode-grid">
         <div class="mode-card live" onclick="showScreen('login-screen')">
             <span class="mode-icon">⚔️</span>
@@ -1058,7 +1057,7 @@
         </div>
     </div>
 
-    <!-- nav links -->
+
     <div class="home-nav">
         <button class="home-nav-btn" onclick="showScreen('login-screen')">Sign In</button>
         <button class="home-nav-btn" onclick="showScreen('register-screen')">Create Account</button>
@@ -1067,7 +1066,7 @@
     </div>
 </div>
 
-<!-- ════ REGISTER SCREEN ════ -->
+
 <div id="register-screen" class="screen" style="display:none;">
     <div class="auth-header">
         <div class="auth-logo">NEXUS</div>
@@ -1108,7 +1107,7 @@
     </div>
 </div>
 
-<!-- ════ LOGIN SCREEN ════ -->
+
 <div id="login-screen" class="screen" style="display:none;">
     <div class="auth-header">
         <div class="auth-logo">NEXUS</div>
@@ -1145,7 +1144,7 @@
     </div>
 </div>
 
-<!-- ════ RECOVERY SCREEN ════ -->
+
 <div id="recovery-screen" class="screen" style="display:none;">
     <div class="auth-header">
         <div class="auth-logo">NEXUS</div>
@@ -1182,7 +1181,7 @@
     </div>
 </div>
 
-<!-- ════ LOBBY SCREEN ════ -->
+
 <div id="lobby-screen" class="screen" style="display:none;">
     <div class="lobby-header">
         <div class="lobby-logo">NEXUS</div>
@@ -1194,7 +1193,7 @@
     </div>
 
     <div class="lobby-body">
-        <!-- Players panel -->
+
         <div class="lobby-panel">
             <div class="panel-head">
                 <span class="dot"></span> Online Players
@@ -1207,7 +1206,7 @@
             </div>
         </div>
 
-        <!-- Leaderboard -->
+
         <div class="lobby-panel">
             <div class="panel-head">🏆 Leaderboard</div>
             <div class="lobby-scroll" style="padding:10px;" id="leaderboard-list">
@@ -1217,7 +1216,7 @@
     </div>
 </div>
 
-<!-- ════ GAME SCREEN ════ -->
+
 <div id="game-container" class="screen" style="display:none;">
     <div class="game-header">
         <div class="room-title">Match Room</div>
@@ -1253,9 +1252,9 @@
     </div>
 </div>
 
-</div><!-- end page-wrapper -->
+</div>
 
-<!-- ════ FOOTER ════ -->
+
 <footer class="site-footer">
     <div class="footer-logo">NEXUS</div>
     <div class="footer-links">
@@ -1274,7 +1273,7 @@
     </div>
 </footer>
 
-<!-- ════ CHALLENGE MODAL ════ -->
+
 <div id="challenge-modal" class="glass-overlay">
     <div class="modal-card" style="border-color:rgba(0,212,255,0.25);">
         <span style="font-size:3rem; display:block; margin-bottom:12px;">⚔️</span>
@@ -1287,7 +1286,7 @@
     </div>
 </div>
 
-<!-- ════ WAITING MODAL ════ -->
+
 <div id="waiting-modal" class="glass-overlay">
     <div class="modal-card" style="border-color:rgba(255,201,64,0.2);">
         <div class="nx-spinner"></div>
@@ -1296,7 +1295,7 @@
     </div>
 </div>
 
-<!-- ════ TOSS MODAL ════ -->
+
 <div id="toss-modal" class="glass-overlay">
     <div class="modal-card" id="toss-modal-card">
         <span class="toss-coin">🪙</span>
@@ -1319,7 +1318,7 @@
     </div>
 </div>
 
-<!-- ════ GAME OVER MODAL ════ -->
+
 <div id="game-over-modal" class="glass-overlay">
     <div class="modal-card">
         <span class="go-icon" id="go-icon">🏆</span>
@@ -1332,7 +1331,7 @@
     </div>
 </div>
 
-<!-- ════ FEEDBACK MODAL ════ -->
+
 <div id="feedback-modal" class="glass-overlay">
     <div class="modal-card" style="text-align:left;">
         <div class="modal-title" style="margin-bottom:4px;">Share Feedback 💬</div>
@@ -1371,7 +1370,7 @@
     </div>
 </div>
 
-<!-- ════ DISCLAIMER MODAL ════ -->
+
 <div id="disclaimer-modal" class="glass-overlay">
     <div class="modal-card" style="text-align:left; max-height:80vh; overflow-y:auto;">
         <div class="modal-title" style="margin-bottom:16px;">Disclaimer &amp; Terms 📋</div>
@@ -1408,9 +1407,7 @@
     </div>
 </div>
 
-<!-- ════════════════════════════════════
-     GAME LOGIC — unchanged from v1
-     ════════════════════════════════════ -->
+
 <script>
     let stompClient = null;
     let currentUser = "";
@@ -2041,3 +2038,4 @@
 </script>
 </body>
 </html>
+-->

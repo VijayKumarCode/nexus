@@ -1,9 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "builds": [
-    { "src": "nexus.html", "use": "@vercel/static" }
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "nexus.css",  "use": "@vercel/static" },
+    { "src": "nexus.js",   "use": "@vercel/static" }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/nexus.html" }
+    { "src": "/(.*)", "dest": "/$1" }
   ]
 }

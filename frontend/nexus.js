@@ -15,21 +15,13 @@
    CONFIG — Environment URL Setup
 ══════════════════════════════════ */
 
-// 1. Establish the current environment
-const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-// 2. Point to the local backend port for dev, or the custom subdomain for production
-const BACKEND_URL = IS_LOCAL
-    ? 'http://localhost:8080'
+const BACKEND_URL = (window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1')
+    ? ''
     : 'https://nexus-production-25f1.up.railway.app';
 
-// 3. Keep a single source of truth for both REST and WebSockets
-const API_BASE = BACKEND_URL;
-
-// 4. WebSockets must use secure 'wss' in production and standard 'ws' locally
-const WS_ENDPOINT = IS_LOCAL
-    ? `ws://localhost:8080/game-websocket`
-    : `wss://nexus-production-25f1.up.railway.app`;
+const API_BASE    = BACKEND_URL + '/api/users';
+const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 
 /* ══════════════════════════════════
    STATE
@@ -255,7 +247,7 @@ async function sendRecoveryOtp() {
     const email = document.getElementById('recovery-email').value;
     if (!email) return showToast('Please enter your email', 'error');
 
-    const res = await fetch('/api/recovery/send-otp', {
+    const res = await fetch(BACKEND_URL + '/api/recovery/send-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
     });
@@ -276,7 +268,7 @@ async function handleRecoverySubmit() {
 
     try {
         if (recoveryMode === 'USERNAME') {
-            const res = await fetch('/api/recovery/verify-username', {
+            const res = await fetch(BACKEND_URL + '/api/recovery/verify-username', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: pendingEmail, otp })
             });
@@ -285,7 +277,7 @@ async function handleRecoverySubmit() {
         } else {
             const newPass = document.getElementById('recovery-new-password').value;
             if (!newPass) { showToast('Enter new password', 'error'); return; }
-            const res = await fetch('/api/recovery/reset-password', {
+            const res = await fetch(BACKEND_URL + '/api/recovery/reset-password', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: pendingEmail, otp, newPassword: newPass })
             });

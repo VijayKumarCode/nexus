@@ -1,19 +1,19 @@
+spring:
+  mail:
+    host: smtp.resend.com
+    port: 587
+    username: resend
+    password: ${RESEND_API_KEY}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          ssl:
+            trust: smtp.resend.com
+        debug: true
 
-mail:
-  host: smtp.resend.com
-  port: 587
-  username: resend
-  password: ${RESEND_API_KEY}
-  properties:
-    mail:
-      smtp:
-        auth: true
-        starttls:
-          enable: true
-        ssl:
-          trust: smtp.resend.com
-      debug: true
-
-  app:
-    base-url: http://localhost:8080
-    mail-from: onboarding@resend.dev
+app:
+  base-url: ${APP_BASE:http://localhost:8080}
+  mail-from: ${MAIL_FROM:onboarding@resend.dev}

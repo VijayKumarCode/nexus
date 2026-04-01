@@ -1,5 +1,4 @@
 spring:
-
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -19,12 +18,12 @@ spring:
             enable: true
           ssl:
             trust: smtp.resend.com
-        debug: false # Set to true if email sending needs to be actively troubleshot
+        debug: false
 
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update # Switch to 'none' after tables are created on the live database!
+      ddl-auto: update
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
@@ -32,9 +31,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
-  app:
-    base-url: ${APP_BASE}
-    mail-from: noreply@nexusgame.space # Use your verified domain for prod
+app:
+  base-url: ${APP_BASE}
+  mail-from: noreply@nexusgame.space
 
 server:
   port: ${PORT:8080}

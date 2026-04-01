@@ -42,7 +42,7 @@ public class OtpService {
 
     public void sendOtp(String email, String otp) {
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("vkumar.kumar31@gmail.com");
+        message.setFrom(appConfig.getMailFrom());
         message.setTo(email);
         message.setSubject("Nexus Multiplayer - Verification Code");
         message.setText("Your OTP is: " + otp + "\n\nValid for 10 minutes.");
@@ -88,7 +88,7 @@ public class OtpService {
                 + "&ngrok-skip-browser-warning=true";
 
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("vkumar.kumar31@gmail.com");
+        message.setFrom(appConfig.getMailFrom());
         message.setTo(email);
         message.setSubject("Activate Your Nexus Account");
         message.setText("Welcome to Nexus Multiplayer!\n\n" +

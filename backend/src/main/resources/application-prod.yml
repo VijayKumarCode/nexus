@@ -1,4 +1,5 @@
 spring:
+
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -31,8 +32,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
-app:
-  base-url: ${APP_BASE_URL}
+  app:
+    base-url: ${APP_BASE}
+    mail-from: noreply@nexusgame.space # Use your verified domain for prod
 
 server:
   port: ${PORT:8080}

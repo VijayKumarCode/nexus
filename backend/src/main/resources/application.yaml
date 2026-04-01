@@ -1,3 +1,4 @@
+
 mail:
   host: smtp.resend.com
   port: 587
@@ -11,5 +12,8 @@ mail:
           enable: true
         ssl:
           trust: smtp.resend.com
-
       debug: true
+
+  app:
+    base-url: http://localhost:8080
+    mail-from: onboarding@resend.dev

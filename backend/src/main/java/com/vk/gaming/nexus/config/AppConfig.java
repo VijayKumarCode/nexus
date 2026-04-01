@@ -9,4 +9,5 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "app")
 public class AppConfig {
     private String baseUrl;
+    private String mailFrom; // Added this field
 }

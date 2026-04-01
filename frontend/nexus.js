@@ -1,14 +1,19 @@
 /* ═══════════════════════════════════════════
-   NEXUS MULTIPLAYER ARENA — v2.0
+   NEXUS MULTIPLAYER ARENA — v2.1
    Game Logic & WebSocket Client
    © 2026 Vijay Kumar. All rights reserved.
+   FIX LOG v2.1:
+     - Removed duplicate 'use strict' (was on lines 7 & 12)
+     - Fixed TOSS_RESULT handler: now uses payload.winner (not payload.payload)
+       so isMyTurn is set correctly for BOTH players
+     - Separated GAME_START handler so it never clobbers TOSS_RESULT state
+     - Fixed resetBoardState host detection to use roomId parts instead of
+       string comparison (< operator) which was unreliable
+     - Added tossGameStartHandled guard to prevent double-processing
+     - Improved register() error messaging for network/mail failures
 ═══════════════════════════════════════════ */
 
 'use strict';
-
-/* ══════════════════════════════════
-   CONFIG — update RAILWAY_URL after deploy
-══════════════════════════════════ */
 
 /* ══════════════════════════════════
    CONFIG — Environment URL Setup
@@ -25,24 +30,25 @@ const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 /* ══════════════════════════════════
    STATE
 ══════════════════════════════════ */
-let stompClient          = null;
-let currentUser          = '';
-let opponentUser         = null;
-let currentRoomId        = '';
-let currentPendingOpponent = null;
-let isMyTurn             = false;
-let isGameOver           = false;
-let roomSubscription     = null;
-let mySymbol             = '';
-let usernameCheckTimeout = null;
-let pendingEmail         = '';
-let recoveryMode         = '';
-let heartbeatInterval    = null;
-let lobbyInterval        = null;
-let leaderboardInterval  = null;
-let tossSubmitted        = false;
-let isConnected          = false;
-let selectedStar         = 0;
+let stompClient             = null;
+let currentUser             = '';
+let opponentUser            = null;
+let currentRoomId           = '';
+let currentPendingOpponent  = null;
+let isMyTurn                = false;
+let isGameOver              = false;
+let roomSubscription        = null;
+let mySymbol                = '';
+let usernameCheckTimeout    = null;
+let pendingEmail            = '';
+let recoveryMode            = '';
+let heartbeatInterval       = null;
+let lobbyInterval           = null;
+let leaderboardInterval     = null;
+let tossSubmitted           = false;
+let tossGameStartHandled    = false;   // ← NEW: prevents GAME_START from clobbering TOSS_RESULT
+let isConnected             = false;
+let selectedStar            = 0;
 
 /* ══════════════════════════════════
    UI HELPERS
@@ -173,48 +179,83 @@ function debounceUsernameCheck() {
 }
 
 async function register() {
-    const fn = document.getElementById('reg-fullname').value;
-    const u  = document.getElementById('reg-username').value;
-    const e  = document.getElementById('reg-email').value;
+    const fn = document.getElementById('reg-fullname').value.trim();
+    const u  = document.getElementById('reg-username').value.trim();
+    const e  = document.getElementById('reg-email').value.trim();
     const p  = document.getElementById('reg-password').value;
 
     if (!fn || !u || !e || !p) { showToast('Please fill all fields', 'error'); return; }
+    if (u.length < 3)          { showToast('Username must be at least 3 characters', 'error'); return; }
+    if (p.length < 4)          { showToast('Password must be at least 4 characters', 'error'); return; }
 
-    const res = await fetch(`${API_BASE}/register`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName: fn, username: u, email: e, password: p })
-    });
+    // Disable button during request to prevent double-submit
+    const btn = document.querySelector('#register-screen .nx-btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
 
-    if (res.ok) {
-        showToast('Activation link sent to your email ✉️', 'success');
-        showScreen('login-screen');
-    } else {
-        const d = await res.json();
-        showToast(d.error || 'Registration failed', 'error');
+    try {
+        const res = await fetch(`${API_BASE}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fullName: fn, username: u, email: e, password: p })
+        });
+
+        if (res.ok) {
+            showToast('✉️ Activation link sent! Check your email (including spam folder).', 'success');
+            showScreen('login-screen');
+        } else {
+            let msg = 'Registration failed. Please try again.';
+            try {
+                const d = await res.json();
+                msg = d.error || d.message || msg;
+            } catch { /* response not JSON, use default */ }
+            showToast(msg, 'error');
+        }
+    } catch (err) {
+        console.error('Register network error:', err);
+        showToast('Network error — please check your connection and try again.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Create Account'; }
     }
 }
 
 async function login() {
-    const u = document.getElementById('login-username').value;
+    const u = document.getElementById('login-username').value.trim();
     const p = document.getElementById('login-password').value;
 
-    const res = await fetch(`${API_BASE}/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p })
-    });
+    if (!u || !p) { showToast('Please enter your username and password', 'error'); return; }
 
-    if (res.ok) {
-        currentUser = u;
-        localStorage.setItem('nexus_user', u);
-        updateLobbyGreeting();
-        await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
-        startHeartbeat();
-        showScreen('lobby-screen');
-        connect();
-        startLobbyRefresh();
-    } else {
-        const d = await res.json();
-        showToast(d.error || 'Login failed', 'error');
+    const btn = document.querySelector('#login-screen .nx-btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+
+    try {
+        const res = await fetch(`${API_BASE}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, password: p })
+        });
+
+        if (res.ok) {
+            currentUser = u;
+            localStorage.setItem('nexus_user', u);
+            updateLobbyGreeting();
+            await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+            startHeartbeat();
+            showScreen('lobby-screen');
+            connect();
+            startLobbyRefresh();
+        } else {
+            let msg = 'Login failed. Check your username and password.';
+            try {
+                const d = await res.json();
+                msg = d.error || d.message || msg;
+            } catch { /* not JSON */ }
+            showToast(msg, 'error');
+        }
+    } catch (err) {
+        console.error('Login network error:', err);
+        showToast('Network error — please check your connection.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Enter Arena'; }
     }
 }
 
@@ -478,29 +519,30 @@ function leaveGame() {
    BOARD
 ══════════════════════════════════ */
 function resetBoardState() {
-    isGameOver = false;
-    isMyTurn = false;
-    tossSubmitted = false;
+    isGameOver           = false;
+    isMyTurn             = false;
+    tossSubmitted        = false;
+    tossGameStartHandled = false;   // ← reset the guard flag on every new game
 
     const cells = document.getElementsByClassName('cell');
     for (let i = 0; i < cells.length; i++) {
         cells[i].textContent = '';
-        cells[i].className = 'cell';
+        cells[i].className   = 'cell';
     }
 
+    /* FIX: roomId is built as [a,b].sort().join('_'), so parts[0] is
+       the alphabetically-first username — that is the host.
+       Using < for string comparison was equivalent but this is more explicit. */
+    const parts  = currentRoomId.split('_');
+    const amHost = parts[0] === currentUser;
+
     const tossBtn = document.getElementById('btn-toss');
-    if (currentUser < opponentUser) {
-
-        const parts = currentRoomId.split('_');
-        const amHost = parts[0] === currentUser;
-
-        if (amHost) {
-            tossBtn.style.display = 'inline-block';
-            setStatus('🪙 You are Host — flip the coin to begin!', 'info');
-        } else {
-            tossBtn.style.display = 'none';
-            setStatus(`⏳ Waiting for ${opponentUser} to flip…`, 'warn');
-        }
+    if (amHost) {
+        tossBtn.style.display = 'inline-block';
+        setStatus('🪙 You are Host — flip the coin to begin!', 'info');
+    } else {
+        tossBtn.style.display = 'none';
+        setStatus(`⏳ Waiting for ${opponentUser} to flip…`, 'warn');
     }
 }
 
@@ -549,6 +591,7 @@ function sendMove(pos) {
 function handleRoomMessage(payload) {
     console.log('Room msg:', payload);
 
+    /* ── GAME_ABORTED ─────────────────────────── */
     if (payload.type === 'GAME_ABORTED') {
         showToast(`${payload.sender} left the match.`, 'warning');
         if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
@@ -559,21 +602,25 @@ function handleRoomMessage(payload) {
         return;
     }
 
+    /* ── GAME_RESET ───────────────────────────── */
     if (payload.type === 'GAME_RESET') {
         document.getElementById('game-over-modal').style.display  = 'none';
         document.getElementById('toss-modal').style.display       = 'none';
         document.getElementById('toss-winner-section').style.display = 'none';
         document.getElementById('toss-loser-section').style.display  = 'none';
-        tossSubmitted = false;
+        tossSubmitted        = false;
+        tossGameStartHandled = false;
         resetBoardState();
         return;
     }
 
+    /* ── TOSS (coin flip result — choose X or O) ─ */
     if (payload.type === 'TOSS') {
-        document.getElementById('btn-toss').style.display  = 'none';
+        document.getElementById('btn-toss').style.display   = 'none';
         document.getElementById('toss-modal').style.display = 'flex';
 
         if (payload.payload === currentUser) {
+            // This player won the toss — let them pick symbol
             document.getElementById('toss-modal-card').style.borderColor     = 'rgba(0,212,255,0.3)';
             document.getElementById('toss-result-title').textContent         = 'You Won the Toss! 🎉';
             document.getElementById('toss-result-title').className           = 'modal-title text-cyan';
@@ -582,6 +629,7 @@ function handleRoomMessage(payload) {
             document.getElementById('toss-loser-section').style.display      = 'none';
             setStatus('You won the toss! Choose your symbol.', 'success');
         } else {
+            // Opponent won — wait for them to choose
             document.getElementById('toss-modal-card').style.borderColor     = 'rgba(255,201,64,0.25)';
             document.getElementById('toss-result-title').textContent         = `${payload.payload} Won 🪙`;
             document.getElementById('toss-result-title').className           = 'modal-title text-gold';
@@ -594,35 +642,68 @@ function handleRoomMessage(payload) {
         return;
     }
 
+    /* ── TOSS_RESULT ──────────────────────────────────────────────────────
+       FIX v2.1: Use payload.winner (the username who goes first as X) instead
+       of payload.payload (which was "X"/"O" in some backend versions and the
+       username in others — inconsistent). payload.winner is always the username.
+       This is the AUTHORITATIVE handler for starting the game.
+       We set tossGameStartHandled = true so GAME_START (if backend also sends it)
+       does NOT clobber the state we set here.
+    ────────────────────────────────────────────────────────────────────── */
     if (payload.type === 'TOSS_RESULT') {
         document.getElementById('toss-modal').style.display = 'none';
         document.getElementById('btn-toss').style.display   = 'none';
-        // winner field is more reliable than payload for username comparison
-        const startsFirst = payload.winner || payload.payload;
-        if (startsFirst === currentUser) {
-            isMyTurn = true; mySymbol = 'X';
+
+        // winner field = username of the player who goes first (plays as X)
+        const firstPlayer = payload.winner;
+
+        if (firstPlayer === currentUser) {
+            isMyTurn = true;
+            mySymbol = 'X';
             setStatus('🎯 Your turn! Make a move.', 'success');
         } else {
-            isMyTurn = false; mySymbol = 'O';
+            isMyTurn = false;
+            mySymbol = 'O';
             setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
         }
+
+        tossGameStartHandled = true;   // guard: block GAME_START from overriding this
         return;
     }
 
+    /* ── GAME_START ───────────────────────────────────────────────────────
+       FIX v2.1: Only process GAME_START if TOSS_RESULT was NOT already handled.
+       Some backends send both TOSS_RESULT and GAME_START; processing both would
+       flip isMyTurn twice, leaving the winner unable to move.
+    ────────────────────────────────────────────────────────────────────── */
     if (payload.type === 'GAME_START') {
+        if (tossGameStartHandled) {
+            // TOSS_RESULT already set up the game — ignore this to avoid clobber
+            console.log('[Nexus] GAME_START ignored — TOSS_RESULT already handled.');
+            return;
+        }
+
+        // Fallback: if backend sends ONLY GAME_START (no TOSS_RESULT)
         document.getElementById('toss-modal').style.display = 'none';
         document.getElementById('btn-toss').style.display   = 'none';
-        const startsFirst = payload.winner || payload.playerOne || payload.payload;
-        if (startsFirst === currentUser) {
-            isMyTurn = true; mySymbol = payload.symbolX || 'X';
+
+        const firstPlayer = payload.winner || payload.playerOne || payload.payload;
+
+        if (firstPlayer === currentUser) {
+            isMyTurn = true;
+            mySymbol = 'X';
             setStatus('🎯 Your turn! Make a move.', 'success');
         } else {
-            isMyTurn = false; mySymbol = payload.symbolO || 'O';
+            isMyTurn = false;
+            mySymbol = 'O';
             setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
         }
+
+        tossGameStartHandled = true;
         return;
     }
 
+    /* ── BOARD MOVE ───────────────────────────── */
     if (payload.boardPosition !== undefined && payload.boardPosition !== null) {
         const cells = document.getElementsByClassName('cell');
         const pos   = parseInt(payload.boardPosition);

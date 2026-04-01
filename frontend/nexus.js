@@ -9,7 +9,6 @@
 /* ══════════════════════════════════
    CONFIG — update RAILWAY_URL after deploy
 ══════════════════════════════════ */
-'use strict';
 
 /* ══════════════════════════════════
    CONFIG — Environment URL Setup
@@ -479,21 +478,29 @@ function leaveGame() {
    BOARD
 ══════════════════════════════════ */
 function resetBoardState() {
-    isGameOver = false; isMyTurn = false; tossSubmitted = false;
+    isGameOver = false;
+    isMyTurn = false;
+    tossSubmitted = false;
 
     const cells = document.getElementsByClassName('cell');
     for (let i = 0; i < cells.length; i++) {
         cells[i].textContent = '';
-        cells[i].className   = 'cell';
+        cells[i].className = 'cell';
     }
 
     const tossBtn = document.getElementById('btn-toss');
     if (currentUser < opponentUser) {
-        tossBtn.style.display = 'inline-block';
-        setStatus('🪙 You are Host — flip the coin to begin!', 'info');
-    } else {
-        tossBtn.style.display = 'none';
-        setStatus(`⏳ Waiting for ${opponentUser} to flip…`, 'warn');
+
+        const parts = currentRoomId.split('_');
+        const amHost = parts[0] === currentUser;
+
+        if (amHost) {
+            tossBtn.style.display = 'inline-block';
+            setStatus('🪙 You are Host — flip the coin to begin!', 'info');
+        } else {
+            tossBtn.style.display = 'none';
+            setStatus(`⏳ Waiting for ${opponentUser} to flip…`, 'warn');
+        }
     }
 }
 
@@ -587,14 +594,30 @@ function handleRoomMessage(payload) {
         return;
     }
 
-    if (payload.type === 'TOSS_RESULT' || payload.type === 'GAME_START') {
+    if (payload.type === 'TOSS_RESULT') {
         document.getElementById('toss-modal').style.display = 'none';
         document.getElementById('btn-toss').style.display   = 'none';
-        if (payload.payload === currentUser) {
+        // winner field is more reliable than payload for username comparison
+        const startsFirst = payload.winner || payload.payload;
+        if (startsFirst === currentUser) {
             isMyTurn = true; mySymbol = 'X';
             setStatus('🎯 Your turn! Make a move.', 'success');
         } else {
             isMyTurn = false; mySymbol = 'O';
+            setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
+        }
+        return;
+    }
+
+    if (payload.type === 'GAME_START') {
+        document.getElementById('toss-modal').style.display = 'none';
+        document.getElementById('btn-toss').style.display   = 'none';
+        const startsFirst = payload.winner || payload.playerOne || payload.payload;
+        if (startsFirst === currentUser) {
+            isMyTurn = true; mySymbol = payload.symbolX || 'X';
+            setStatus('🎯 Your turn! Make a move.', 'success');
+        } else {
+            isMyTurn = false; mySymbol = payload.symbolO || 'O';
             setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
         }
         return;

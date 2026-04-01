@@ -782,3 +782,35 @@ body::before {
     .auth-body  { padding: 24px 24px 28px; }
     .lobby-body { padding: 16px; }
 }
+
+/* ADD THESE: */
+@media (max-width: 480px) {
+    /* Nav buttons: neat 2×2 grid instead of ragged flex wrap */
+    .home-nav {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        padding: 0 16px 32px;
+    }
+    .home-nav-btn {
+        text-align: center;
+        padding: 10px 12px;
+        width: 100%;
+    }
+
+    /* Mode cards stay single column */
+    .mode-grid { padding: 0 16px 40px; }
+
+    /* Toss choice buttons stack on very small screens */
+    .toss-choice-btns { flex-direction: column; }
+    .toss-choice-btn  { padding: 14px; }
+
+    /* Game board fits screen comfortably */
+    .board-wrap { padding: 12px 14px; }
+    .cell { font-size: clamp(2rem, 12vw, 3.5rem); }
+
+    /* Lobby body padding */
+    .auth-body  { padding: 20px 18px 24px; }
+    .lobby-body { padding: 12px; }
+    .lobby-header { padding: 16px 16px 0; }
+}

@@ -22,84 +22,106 @@ public class GameService {
 
     private final GameMoveRepository gameMoveRepository;
     private final UserRepository userRepository;
-    private final UserService userService; // 🔥 NEW
+    private final UserService userService;
 
-    private final Map<String, String[]> roomPlayersMap = new ConcurrentHashMap<>();
-    private final Map<String, String> currentTurnMap = new ConcurrentHashMap<>();
-    private final Map<String, String> playerXMap = new ConcurrentHashMap<>();
-    private final Map<String, String> playerOMap = new ConcurrentHashMap<>();
-    private final Map<String, String> tossWinnerMap = new ConcurrentHashMap<>(); // 🔥 NEW
+    private final Map<String, String[]> roomPlayersMap  = new ConcurrentHashMap<>();
+    private final Map<String, String>   currentTurnMap  = new ConcurrentHashMap<>();
+    private final Map<String, String>   playerXMap      = new ConcurrentHashMap<>();
+    private final Map<String, String>   playerOMap      = new ConcurrentHashMap<>();
+    private final Map<String, String>   tossWinnerMap   = new ConcurrentHashMap<>();
 
     // ========================= GAME MOVE =========================
     @Transactional
     public GameMove processGameMove(GameMove incomingMove) {
         String rId = incomingMove.getRoomId();
 
+        /* ── GUARD: roomId must not be null ── */
+        if (rId == null || rId.isBlank()) {
+            log.error("processGameMove called with null/blank roomId — move rejected");
+            return null;
+        }
+
+        log.info("processGameMove — room={} player={} pos={}",
+                rId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition());
+
+        /* ── RECOVER in-memory state if server restarted ── */
         if (!currentTurnMap.containsKey(rId)) {
+            log.warn("currentTurnMap miss for room={} — attempting DB recovery", rId);
             recoverGameStateFromDB(rId);
         }
 
-        // 🚨 TURN VALIDATION
-        if (!incomingMove.getPlayerUsername().equals(currentTurnMap.get(rId))) {
-            log.warn("Invalid turn by {}", incomingMove.getPlayerUsername());
+        /* ── Log map state so we can debug remotely ── */
+        log.info("State maps — currentTurn={} playerX={} playerO={}",
+                currentTurnMap.get(rId),
+                playerXMap.get(rId),
+                playerOMap.get(rId));
+
+        /* ── TURN VALIDATION ── */
+        String expectedPlayer = currentTurnMap.get(rId);
+        if (expectedPlayer == null) {
+            log.error("currentTurnMap has no entry for room={} after recovery — move rejected", rId);
             return null;
         }
 
-        // 🚨 DUPLICATE MOVE CHECK
+        if (!incomingMove.getPlayerUsername().equals(expectedPlayer)) {
+            log.warn("Invalid turn in room={}: expected={} got={}",
+                    rId, expectedPlayer, incomingMove.getPlayerUsername());
+            return null;
+        }
+
+        /* ── DUPLICATE MOVE CHECK ── */
         if (gameMoveRepository.existsByRoomIdAndBoardPosition(
                 rId, incomingMove.getBoardPosition())) {
-            log.warn("Duplicate move at {}", incomingMove.getBoardPosition());
+            log.warn("Duplicate move at pos={} in room={}", incomingMove.getBoardPosition(), rId);
             return null;
         }
 
-        // ✅ Derive symbol from server-side maps — never trust frontend
-        String symbol = incomingMove.getPlayerUsername().equals(playerXMap.get(rId)) ? "X" : "O";
-        incomingMove.setSymbol(symbol); // ✅ set for return broadcast too
+        /* ── SYMBOL — always derived server-side, never trusted from client ── */
+        String xPlayer = playerXMap.get(rId);
+        String symbol  = incomingMove.getPlayerUsername().equals(xPlayer) ? "X" : "O";
+        incomingMove.setSymbol(symbol);
 
+        log.info("Move accepted — room={} player={} pos={} symbol={}",
+                rId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition(), symbol);
+
+        /* ── PERSIST ── */
         GameMoveEntity entity = new GameMoveEntity();
         entity.setRoomId(rId);
         entity.setPlayerUsername(incomingMove.getPlayerUsername());
         entity.setBoardPosition(incomingMove.getBoardPosition());
         entity.setSymbol(symbol);
-
         gameMoveRepository.save(entity);
 
-        // 🔥 BUILD BOARD FROM DB
+        /* ── CHECK WIN / DRAW ── */
         char[] board = buildBoard(rId);
 
-        // 🔥 CHECK WIN
         String winnerSymbol = checkWinner(board);
-
         if (winnerSymbol != null) {
-
-            String winner = winnerSymbol.equals("X") ? playerXMap.get(rId) : playerOMap.get(rId);
-            String loser = winnerSymbol.equals("X") ? playerOMap.get(rId) : playerXMap.get(rId);
+            String winner = "X".equals(winnerSymbol) ? playerXMap.get(rId) : playerOMap.get(rId);
+            String loser  = "X".equals(winnerSymbol) ? playerOMap.get(rId) : playerXMap.get(rId);
             userService.incrementWins(winner);
             userService.incrementLosses(loser);
             incomingMove.setGameState("WINNER_" + winnerSymbol);
-            log.info("Game finished in room {} -> Winner: {}", rId, winner);
+            log.info("Game finished — room={} winner={}", rId, winner);
             currentTurnMap.remove(rId);
-            return incomingMove; //
-
+            return incomingMove;
         }
 
         boolean isDraw = true;
-        for (char c : board) {
-            if (c == '-') { isDraw = false; break; }
-        }
+        for (char c : board) { if (c == '-') { isDraw = false; break; } }
         if (isDraw) {
             incomingMove.setGameState("DRAW");
-            log.info("Game drawn in room {}", rId);
+            log.info("Game drawn — room={}", rId);
             currentTurnMap.remove(rId);
-            return incomingMove; // ✅ stop here too
+            return incomingMove;
         }
 
-        String nextTurn = incomingMove.getSymbol().equals("X")
-                ? playerOMap.get(rId)
-                : playerXMap.get(rId);
+        /* ── ADVANCE TURN ── */
+        String nextPlayer = "X".equals(symbol) ? playerOMap.get(rId) : playerXMap.get(rId);
+        currentTurnMap.put(rId, nextPlayer);
+        log.info("Next turn — room={} nextPlayer={}", rId, nextPlayer);
 
-        currentTurnMap.put(rId, nextTurn);
-
+        incomingMove.setGameState("ONGOING");
         return incomingMove;
     }
 
@@ -107,63 +129,61 @@ public class GameService {
     private char[] buildBoard(String roomId) {
         List<GameMoveEntity> history =
                 gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
-
         char[] board = new char[9];
         Arrays.fill(board, '-');
-
         for (GameMoveEntity move : history) {
             board[move.getBoardPosition()] = move.getSymbol().charAt(0);
         }
-
         return board;
     }
 
     private String checkWinner(char[] b) {
-        int[][] winPatterns = {
+        int[][] patterns = {
                 {0,1,2},{3,4,5},{6,7,8},
                 {0,3,6},{1,4,7},{2,5,8},
                 {0,4,8},{2,4,6}
         };
-
-        for (int[] p : winPatterns) {
-            if (b[p[0]] != '-' &&
-                    b[p[0]] == b[p[1]] &&
-                    b[p[1]] == b[p[2]]) {
+        for (int[] p : patterns) {
+            if (b[p[0]] != '-' && b[p[0]] == b[p[1]] && b[p[1]] == b[p[2]])
                 return String.valueOf(b[p[0]]);
-            }
         }
         return null;
     }
 
     // ========================= RECOVERY =========================
+    /* ══════════════════════════════════════════════════════════════
+       This runs when the server restarts and in-memory maps are lost.
+       Rebuilds state from DB history so a game in progress can continue.
+    ══════════════════════════════════════════════════════════════ */
     private void recoverGameStateFromDB(String roomId) {
         List<GameMoveEntity> history =
                 gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
 
-        if (history.isEmpty()) return;
-
-        String p1 = history.get(0).getPlayerUsername();
-        String sym = history.get(0).getSymbol();
-
-        if ("X".equals(sym)) playerXMap.put(roomId, p1);
-        else playerOMap.put(roomId, p1);
-
-        for (GameMoveEntity m : history) {
-            if (!m.getPlayerUsername().equals(p1)) {
-                if ("X".equals(m.getSymbol()))
-                    playerXMap.put(roomId, m.getPlayerUsername());
-                else
-                    playerOMap.put(roomId, m.getPlayerUsername());
-                break;
-            }
+        if (history.isEmpty()) {
+            log.warn("Recovery failed — no DB history for room={}", roomId);
+            return;
         }
 
-        GameMoveEntity last = history.get(history.size() - 1);
-        String next = "X".equals(last.getSymbol())
-                ? playerOMap.get(roomId)
-                : playerXMap.get(roomId);
+        /* Rebuild playerX and playerO from move history */
+        for (GameMoveEntity m : history) {
+            if ("X".equals(m.getSymbol())) playerXMap.put(roomId, m.getPlayerUsername());
+            else                           playerOMap.put(roomId, m.getPlayerUsername());
+        }
 
+        /* Also rebuild roomPlayersMap */
+        String px = playerXMap.get(roomId);
+        String po = playerOMap.get(roomId);
+        if (px != null && po != null) {
+            roomPlayersMap.put(roomId, new String[]{px, po});
+        }
+
+        /* Next turn = opposite of last move */
+        GameMoveEntity last = history.get(history.size() - 1);
+        String next = "X".equals(last.getSymbol()) ? playerOMap.get(roomId) : playerXMap.get(roomId);
         currentTurnMap.put(roomId, next);
+
+        log.info("Recovery complete — room={} playerX={} playerO={} nextTurn={}",
+                roomId, playerXMap.get(roomId), playerOMap.get(roomId), next);
     }
 
     // ========================= TOSS =========================
@@ -171,17 +191,18 @@ public class GameService {
         String roomId = request.getRoomId();
 
         if (roomId == null || request.getPlayerOne() == null || request.getPlayerTwo() == null) {
-            throw new RuntimeException("Invalid toss request: null fields. roomId="
+            throw new RuntimeException("Invalid toss request — null fields. roomId="
                     + roomId + " p1=" + request.getPlayerOne() + " p2=" + request.getPlayerTwo());
         }
 
-        boolean toss = new Random().nextBoolean();
-
-        String winner = toss ? request.getPlayerOne() : request.getPlayerTwo();
-        String loser = toss ? request.getPlayerTwo() : request.getPlayerOne();
+        boolean coin   = new Random().nextBoolean();
+        String winner  = coin ? request.getPlayerOne() : request.getPlayerTwo();
+        String loser   = coin ? request.getPlayerTwo() : request.getPlayerOne();
 
         tossWinnerMap.put(roomId, winner);
-        roomPlayersMap.put(roomId, new String[]{request.getPlayerOne(), request.getPlayerTwo()}); // ✅
+        roomPlayersMap.put(roomId, new String[]{request.getPlayerOne(), request.getPlayerTwo()});
+
+        log.info("Toss — room={} winner={}", roomId, winner);
 
         GameSystemMessage res = new GameSystemMessage();
         res.setType("TOSS");
@@ -189,7 +210,6 @@ public class GameService {
         res.setLoser(loser);
         res.setPayload(winner);
         res.setMessage(winner + " won the toss! Choose X or O.");
-
         return res;
     }
 
@@ -198,26 +218,28 @@ public class GameService {
                                                  String ignoredWinner,
                                                  String ignoredLoser,
                                                  String choice) {
-
-        // 🔥 REAL winner from backend
         String winner = tossWinnerMap.get(roomId);
-
         if (winner == null) {
-            throw new RuntimeException("Toss not initialized");
+            throw new RuntimeException("Toss not initialized for room=" + roomId);
         }
 
-        // ✅ Get loser from stored players, not from empty X/O maps
         String[] players = roomPlayersMap.get(roomId);
+        if (players == null) {
+            throw new RuntimeException("roomPlayersMap missing for room=" + roomId);
+        }
+
         String loser = winner.equals(players[0]) ? players[1] : players[0];
 
         String firstPlayer;
         String secondPlayer;
 
+        /* "X" means the toss winner plays first as X */
         if ("X".equalsIgnoreCase(choice)) {
-            firstPlayer = winner;
+            firstPlayer  = winner;
             secondPlayer = loser;
         } else {
-            firstPlayer = loser;
+            /* "O" means the toss winner chose O — loser plays X first */
+            firstPlayer  = loser;
             secondPlayer = winner;
         }
 
@@ -225,13 +247,15 @@ public class GameService {
         playerOMap.put(roomId, secondPlayer);
         currentTurnMap.put(roomId, firstPlayer);
 
+        log.info("Toss decision — room={} X(first)={} O={} choice={}",
+                roomId, firstPlayer, secondPlayer, choice);
+
         GameSystemMessage res = new GameSystemMessage();
         res.setType("TOSS_RESULT");
         res.setWinner(winner);
         res.setLoser(loser);
-        res.setPayload(firstPlayer);
+        res.setPayload(firstPlayer);    // firstPlayer = the one who moves first (X)
         res.setMessage(firstPlayer + " starts as X. " + secondPlayer + " is O.");
-
         return res;
     }
 
@@ -244,13 +268,12 @@ public class GameService {
         playerOMap.remove(roomId);
         tossWinnerMap.remove(roomId);
         roomPlayersMap.remove(roomId);
+        log.info("Game reset — room={}", roomId);
     }
 
     @Transactional
     public void markPlayersOnlineByRoom(String roomId) {
-
-        resetGame(roomId); // 🔥 FIX MEMORY LEAK
-
+        resetGame(roomId);
         String[] parts = roomId.split("_");
         if (parts.length >= 2) {
             resetUser(parts[0]);

@@ -1,24 +1,25 @@
 /* ═══════════════════════════════════════════
-   NEXUS MULTIPLAYER ARENA — v2.1
+   NEXUS MULTIPLAYER ARENA — v2.2
    Game Logic & WebSocket Client
    © 2026 Vijay Kumar. All rights reserved.
-   FIX LOG v2.1:
-     - Removed duplicate 'use strict' (was on lines 7 & 12)
-     - Fixed TOSS_RESULT handler: now uses payload.winner (not payload.payload)
-       so isMyTurn is set correctly for BOTH players
-     - Separated GAME_START handler so it never clobbers TOSS_RESULT state
-     - Fixed resetBoardState host detection to use roomId parts instead of
-       string comparison (< operator) which was unreliable
-     - Added tossGameStartHandled guard to prevent double-processing
-     - Improved register() error messaging for network/mail failures
+   FIX LOG v2.2:
+     BUG 1: submitTossChoice now directly passes 'X'/'O' — removed the
+            'PLAY'/'PASS' magic string mapping (index.html buttons updated).
+     BUG 2: logout() now fully resets all game/room/session state.
+     BUG 3: leaveGame() now fully resets isMyTurn, mySymbol,
+            tossSubmitted, tossGameStartHandled.
+     BUG 4: requestRematch() now sends '' (empty string) as STOMP body,
+            not {} (JS object). STOMP requires a string body.
+     BUG 5: sendMove() now guards against disconnected WebSocket.
+     BUG 6: refreshLobby Challenge button now uses data-username attribute
+            instead of inline onclick to prevent XSS from crafted usernames.
 ═══════════════════════════════════════════ */
 
 'use strict';
 
 /* ══════════════════════════════════
-   CONFIG — Environment URL Setup
+   CONFIG
 ══════════════════════════════════ */
-
 const BACKEND_URL = (window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1')
     ? ''
@@ -30,31 +31,29 @@ const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 /* ══════════════════════════════════
    STATE
 ══════════════════════════════════ */
-let stompClient             = null;
-let currentUser             = '';
-let opponentUser            = null;
-let currentRoomId           = '';
-let currentPendingOpponent  = null;
-let isMyTurn                = false;
-let isGameOver              = false;
-let roomSubscription        = null;
-let mySymbol                = '';
-let usernameCheckTimeout    = null;
-let pendingEmail            = '';
-let recoveryMode            = '';
-let heartbeatInterval       = null;
-let lobbyInterval           = null;
-let leaderboardInterval     = null;
-let tossSubmitted           = false;
-let tossGameStartHandled    = false;   // ← NEW: prevents GAME_START from clobbering TOSS_RESULT
-let isConnected             = false;
-let selectedStar            = 0;
+let stompClient            = null;
+let currentUser            = '';
+let opponentUser           = null;
+let currentRoomId          = '';
+let currentPendingOpponent = null;
+let isMyTurn               = false;
+let isGameOver             = false;
+let roomSubscription       = null;
+let mySymbol               = '';
+let usernameCheckTimeout   = null;
+let pendingEmail           = '';
+let recoveryMode           = '';
+let heartbeatInterval      = null;
+let lobbyInterval          = null;
+let leaderboardInterval    = null;
+let tossSubmitted          = false;
+let tossGameStartHandled   = false;
+let isConnected            = false;
+let selectedStar           = 0;
 
 /* ══════════════════════════════════
    UI HELPERS
 ══════════════════════════════════ */
-
-/** Switch visible screen with animation */
 function showScreen(screenId) {
     document.querySelectorAll('.screen').forEach(el => el.style.display = 'none');
     const el = document.getElementById(screenId);
@@ -63,14 +62,12 @@ function showScreen(screenId) {
     requestAnimationFrame(() => { el.style.animation = 'fadeUp 0.4s ease forwards'; });
 }
 
-/** Update status bar in game screen */
 function setStatus(text, type = 'info') {
     const el = document.getElementById('status-indicator');
     el.textContent = text;
     el.className   = 'status-bar status-' + type;
 }
 
-/** Show a non-blocking toast notification */
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     const toast     = document.createElement('div');
@@ -84,14 +81,12 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-/** Set lobby greeting + avatar initials */
 function updateLobbyGreeting() {
     document.getElementById('lobby-greeting').textContent = currentUser;
     const av = document.getElementById('lobby-avatar-el');
     if (av) av.textContent = currentUser.slice(0, 2).toUpperCase();
 }
 
-/** Set match room player names */
 function setRoomDisplay(p1, p2) {
     document.getElementById('room-p1').textContent = p1;
     document.getElementById('room-p2').textContent = p2;
@@ -111,8 +106,7 @@ function submitFeedback() {
     const text     = document.getElementById('feedback-text').value.trim();
     const category = document.getElementById('feedback-category').value;
     if (!text) { showToast('Please write your feedback before sending.', 'warning'); return; }
-    // TODO: POST to /api/feedback when backend endpoint is ready
-    console.log('Feedback submitted:', { rating: selectedStar, category, text, user: currentUser });
+    console.log('Feedback:', { rating: selectedStar, category, text, user: currentUser });
     showToast('Thank you! Your feedback has been received. 🙏', 'success');
     document.getElementById('feedback-modal').style.display = 'none';
     document.getElementById('feedback-text').value = '';
@@ -152,7 +146,7 @@ function startHeartbeat() {
 }
 
 /* ══════════════════════════════════
-   AUTH — Register / Login / Logout
+   AUTH
 ══════════════════════════════════ */
 function debounceUsernameCheck() {
     const val = document.getElementById('reg-username').value.trim();
@@ -188,7 +182,6 @@ async function register() {
     if (u.length < 3)          { showToast('Username must be at least 3 characters', 'error'); return; }
     if (p.length < 4)          { showToast('Password must be at least 4 characters', 'error'); return; }
 
-    // Disable button during request to prevent double-submit
     const btn = document.querySelector('#register-screen .nx-btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
 
@@ -204,14 +197,11 @@ async function register() {
             showScreen('login-screen');
         } else {
             let msg = 'Registration failed. Please try again.';
-            try {
-                const d = await res.json();
-                msg = d.error || d.message || msg;
-            } catch { /* response not JSON, use default */ }
+            try { const d = await res.json(); msg = d.error || d.message || msg; } catch {}
             showToast(msg, 'error');
         }
     } catch (err) {
-        console.error('Register network error:', err);
+        console.error('Register error:', err);
         showToast('Network error — please check your connection and try again.', 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Create Account'; }
@@ -245,23 +235,30 @@ async function login() {
             startLobbyRefresh();
         } else {
             let msg = 'Login failed. Check your username and password.';
-            try {
-                const d = await res.json();
-                msg = d.error || d.message || msg;
-            } catch { /* not JSON */ }
+            try { const d = await res.json(); msg = d.error || d.message || msg; } catch {}
             showToast(msg, 'error');
         }
     } catch (err) {
-        console.error('Login network error:', err);
+        console.error('Login error:', err);
         showToast('Network error — please check your connection.', 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Enter Arena'; }
     }
 }
 
+/* BUG 2 FIX: logout now fully resets ALL game/session state */
 function logout() {
     localStorage.removeItem('nexus_user');
-    currentUser = '';
+    currentUser            = '';
+    opponentUser           = null;
+    currentRoomId          = '';
+    currentPendingOpponent = null;
+    isMyTurn               = false;
+    isGameOver             = false;
+    mySymbol               = '';
+    tossSubmitted          = false;
+    tossGameStartHandled   = false;
+    if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
     if (heartbeatInterval)   clearInterval(heartbeatInterval);
     if (lobbyInterval)       clearInterval(lobbyInterval);
     if (leaderboardInterval) clearInterval(leaderboardInterval);
@@ -286,12 +283,10 @@ function showRecovery(mode) {
 async function sendRecoveryOtp() {
     const email = document.getElementById('recovery-email').value;
     if (!email) return showToast('Please enter your email', 'error');
-
     const res = await fetch(BACKEND_URL + '/api/recovery/send-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
     });
-
     if (res.ok) {
         pendingEmail = email;
         document.getElementById('recovery-step-1').style.display = 'none';
@@ -305,7 +300,6 @@ async function sendRecoveryOtp() {
 async function handleRecoverySubmit() {
     const otp = document.getElementById('recovery-otp').value;
     if (!otp) { showToast('Enter the OTP', 'error'); return; }
-
     try {
         if (recoveryMode === 'USERNAME') {
             const res = await fetch(BACKEND_URL + '/api/recovery/verify-username', {
@@ -334,7 +328,7 @@ function filterLobby() {
     const q = document.getElementById('player-search').value.toLowerCase();
     document.querySelectorAll('.user-item-row').forEach(item => {
         const u = item.getAttribute('data-username').toLowerCase();
-        const f = item.getAttribute('data-fullname').toLowerCase();
+        const f = (item.getAttribute('data-fullname') || '').toLowerCase();
         item.style.display = (u.includes(q) || f.includes(q)) ? 'flex' : 'none';
     });
 }
@@ -351,36 +345,46 @@ function startLobbyRefresh() {
 async function refreshLobby() {
     if (document.getElementById('lobby-screen').style.display === 'none') return;
     try {
-        const res    = await fetch(`${API_BASE}/lobby`);
+        const res   = await fetch(`${API_BASE}/lobby`);
         if (!res.ok) return;
-        const users  = await res.json();
-        const list   = document.getElementById('online-users-list');
+        const users = await res.json();
+        const list  = document.getElementById('online-users-list');
         const others = users.filter(u => u.username !== currentUser);
 
         if (!others.length) {
-            list.innerHTML = '<div style="text-align:center; padding:32px; color:var(--muted); font-size:0.82rem;">No other players online</div>';
+            list.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.82rem;">No other players online</div>';
             return;
         }
 
+        /* BUG 6 FIX: use data attributes + event delegation instead of inline
+           onclick with username string interpolation (XSS risk) */
         list.innerHTML = others.map(user => {
             const busy      = user.status === 'IN_GAME';
             const pillClass = busy ? 'status-ingame' : 'status-online';
             const pillText  = busy ? 'In Game' : 'Online';
             const initials  = user.username.slice(0, 2).toUpperCase();
-            return `<div class="player-row user-item-row" data-username="${user.username}" data-fullname="${user.fullName || ''}">
+            const safeName  = user.username.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const safeFullName = (user.fullName || 'Nexus Player').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<div class="player-row user-item-row" data-username="${safeName}" data-fullname="${safeFullName}">
                 <div class="player-info">
                     <div class="player-avatar">${initials}</div>
                     <div>
-                        <div class="player-name">${user.username}</div>
-                        <div class="player-fullname">${user.fullName || 'Nexus Player'}</div>
+                        <div class="player-name">${safeName}</div>
+                        <div class="player-fullname">${safeFullName}</div>
                     </div>
                 </div>
-                <div style="display:flex; align-items:center; gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
                     <span class="status-pill ${pillClass}">${pillText}</span>
-                    <button class="challenge-btn" ${busy || user.status !== 'ONLINE' ? 'disabled' : ''} onclick="sendChallenge('${user.username}')">Challenge</button>
+                    <button class="challenge-btn" data-target="${safeName}"
+                        ${busy || user.status !== 'ONLINE' ? 'disabled' : ''}>Challenge</button>
                 </div>
             </div>`;
         }).join('');
+
+        /* Attach click handlers safely via JS — not inline onclick */
+        list.querySelectorAll('.challenge-btn:not([disabled])').forEach(btn => {
+            btn.addEventListener('click', () => sendChallenge(btn.getAttribute('data-target')));
+        });
 
         filterLobby();
     } catch (e) { console.error('Lobby refresh failed', e); }
@@ -394,7 +398,7 @@ async function refreshLeaderboard() {
         const list    = document.getElementById('leaderboard-list');
 
         if (!players.length) {
-            list.innerHTML = '<div style="text-align:center; padding:24px; color:var(--muted); font-size:0.8rem;">No games played yet</div>';
+            list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:0.8rem;">No games played yet</div>';
             return;
         }
 
@@ -480,7 +484,6 @@ function setupGame(roomId, opponent) {
     const parts   = roomId.split('_');
     setRoomDisplay(parts[0], parts[1]);
     showScreen('game-container');
-
     if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
     if (stompClient && stompClient.connected) {
         roomSubscription = stompClient.subscribe(
@@ -491,10 +494,12 @@ function setupGame(roomId, opponent) {
     resetBoardState();
 }
 
+/* BUG 4 FIX: send '' (empty string) as STOMP body — not {} (JS object) */
 function requestRematch() {
-    stompClient.send(`/app/reset/${currentRoomId}`, {}, {});
+    stompClient.send(`/app/reset/${currentRoomId}`, {}, '');
 }
 
+/* BUG 3 FIX: reset all game state on leave */
 function leaveGame() {
     ['game-over-modal', 'toss-modal', 'waiting-modal', 'challenge-modal'].forEach(id => {
         document.getElementById(id).style.display = 'none';
@@ -508,9 +513,13 @@ function leaveGame() {
     }
 
     if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-    isGameOver    = false;
-    currentRoomId = '';
-    opponentUser  = '';
+    isGameOver           = false;
+    isMyTurn             = false;
+    mySymbol             = '';
+    tossSubmitted        = false;
+    tossGameStartHandled = false;
+    currentRoomId        = '';
+    opponentUser         = '';
     showScreen('lobby-screen');
     startLobbyRefresh();
 }
@@ -521,8 +530,9 @@ function leaveGame() {
 function resetBoardState() {
     isGameOver           = false;
     isMyTurn             = false;
+    mySymbol             = '';
     tossSubmitted        = false;
-    tossGameStartHandled = false;   // ← reset the guard flag on every new game
+    tossGameStartHandled = false;
 
     const cells = document.getElementsByClassName('cell');
     for (let i = 0; i < cells.length; i++) {
@@ -530,13 +540,10 @@ function resetBoardState() {
         cells[i].className   = 'cell';
     }
 
-    /* FIX: roomId is built as [a,b].sort().join('_'), so parts[0] is
-       the alphabetically-first username — that is the host.
-       Using < for string comparison was equivalent but this is more explicit. */
     const parts  = currentRoomId.split('_');
     const amHost = parts[0] === currentUser;
-
     const tossBtn = document.getElementById('btn-toss');
+
     if (amHost) {
         tossBtn.style.display = 'inline-block';
         setStatus('🪙 You are Host — flip the coin to begin!', 'info');
@@ -558,13 +565,14 @@ function sendToss() {
     setStatus('🪙 Flipping the coin…', 'info');
 }
 
+/* BUG 1 FIX: choice is now directly 'X' or 'O' — no ternary needed.
+   index.html buttons call submitTossChoice('X') and submitTossChoice('O'). */
 function submitTossChoice(choice) {
     if (tossSubmitted) return;
     tossSubmitted = true;
     document.querySelectorAll('.toss-choice-btn').forEach(b => b.disabled = true);
     stompClient.send(`/app/toss/decision/${currentRoomId}`, {}, JSON.stringify({
-        winner: currentUser, loser: opponentUser,
-        payload: choice === 'PLAY' ? 'X' : 'O', message: choice
+        payload: choice    // 'X' → winner plays X first, 'O' → winner plays O (loser goes first)
     }));
     document.getElementById('toss-modal').style.display = 'none';
 }
@@ -572,8 +580,13 @@ function submitTossChoice(choice) {
 /* ══════════════════════════════════
    GAME MOVE
 ══════════════════════════════════ */
+/* BUG 5 FIX: guard against disconnected WebSocket before sending */
 function sendMove(pos) {
     if (isGameOver || !isMyTurn) return;
+    if (!stompClient || !stompClient.connected) {
+        showToast('Connection lost. Please refresh.', 'error');
+        return;
+    }
     const cells = document.getElementsByClassName('cell');
     if (cells[pos].textContent !== '') return;
 
@@ -591,7 +604,6 @@ function sendMove(pos) {
 function handleRoomMessage(payload) {
     console.log('Room msg:', payload);
 
-    /* ── GAME_ABORTED ─────────────────────────── */
     if (payload.type === 'GAME_ABORTED') {
         showToast(`${payload.sender} left the match.`, 'warning');
         if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
@@ -602,10 +614,9 @@ function handleRoomMessage(payload) {
         return;
     }
 
-    /* ── GAME_RESET ───────────────────────────── */
     if (payload.type === 'GAME_RESET') {
-        document.getElementById('game-over-modal').style.display  = 'none';
-        document.getElementById('toss-modal').style.display       = 'none';
+        document.getElementById('game-over-modal').style.display = 'none';
+        document.getElementById('toss-modal').style.display      = 'none';
         document.getElementById('toss-winner-section').style.display = 'none';
         document.getElementById('toss-loser-section').style.display  = 'none';
         tossSubmitted        = false;
@@ -614,88 +625,41 @@ function handleRoomMessage(payload) {
         return;
     }
 
-    /* ── TOSS (coin flip result — choose X or O) ─ */
     if (payload.type === 'TOSS') {
         document.getElementById('btn-toss').style.display   = 'none';
         document.getElementById('toss-modal').style.display = 'flex';
 
         if (payload.payload === currentUser) {
-            // This player won the toss — let them pick symbol
-            document.getElementById('toss-modal-card').style.borderColor     = 'rgba(0,212,255,0.3)';
-            document.getElementById('toss-result-title').textContent         = 'You Won the Toss! 🎉';
-            document.getElementById('toss-result-title').className           = 'modal-title text-cyan';
-            document.getElementById('toss-result-desc').textContent          = 'Pick your symbol to enter the arena:';
-            document.getElementById('toss-winner-section').style.display     = 'block';
-            document.getElementById('toss-loser-section').style.display      = 'none';
+            document.getElementById('toss-modal-card').style.borderColor = 'rgba(0,212,255,0.3)';
+            document.getElementById('toss-result-title').textContent     = 'You Won the Toss! 🎉';
+            document.getElementById('toss-result-title').className       = 'modal-title text-cyan';
+            document.getElementById('toss-result-desc').textContent      = 'Pick your symbol to enter the arena:';
+            document.getElementById('toss-winner-section').style.display = 'block';
+            document.getElementById('toss-loser-section').style.display  = 'none';
             setStatus('You won the toss! Choose your symbol.', 'success');
         } else {
-            // Opponent won — wait for them to choose
-            document.getElementById('toss-modal-card').style.borderColor     = 'rgba(255,201,64,0.25)';
-            document.getElementById('toss-result-title').textContent         = `${payload.payload} Won 🪙`;
-            document.getElementById('toss-result-title').className           = 'modal-title text-gold';
-            document.getElementById('toss-result-desc').textContent          = 'Your opponent is choosing their symbol…';
-            document.getElementById('toss-winner-section').style.display     = 'none';
-            document.getElementById('toss-loser-section').style.display      = 'block';
-            document.getElementById('toss-waiting-text').textContent         = `Waiting for ${payload.payload} to choose…`;
+            document.getElementById('toss-modal-card').style.borderColor = 'rgba(255,201,64,0.25)';
+            document.getElementById('toss-result-title').textContent     = `${payload.payload} Won 🪙`;
+            document.getElementById('toss-result-title').className       = 'modal-title text-gold';
+            document.getElementById('toss-result-desc').textContent      = 'Your opponent is choosing their symbol…';
+            document.getElementById('toss-winner-section').style.display = 'none';
+            document.getElementById('toss-loser-section').style.display  = 'block';
+            document.getElementById('toss-waiting-text').textContent     = `Waiting for ${payload.payload} to choose…`;
             setStatus(`${payload.payload} won the toss. Waiting…`, 'warn');
         }
         return;
     }
 
-    /* ── TOSS_RESULT ──────────────────────────────────────────────────────
-       FIX v2.1: Use payload.winner (the username who goes first as X) instead
-       of payload.payload (which was "X"/"O" in some backend versions and the
-       username in others — inconsistent). payload.winner is always the username.
-       This is the AUTHORITATIVE handler for starting the game.
-       We set tossGameStartHandled = true so GAME_START (if backend also sends it)
-       does NOT clobber the state we set here.
-    ────────────────────────────────────────────────────────────────────── */
     if (payload.type === 'TOSS_RESULT') {
         document.getElementById('toss-modal').style.display = 'none';
         document.getElementById('btn-toss').style.display   = 'none';
 
-        // winner field = username of the player who goes first (plays as X)
-        const firstPlayer = payload.payload;
-
+        const firstPlayer = payload.payload;   // username who goes first as X
         if (firstPlayer === currentUser) {
-            isMyTurn = true;
-            mySymbol = 'X';
+            isMyTurn = true;  mySymbol = 'X';
             setStatus('🎯 Your turn! Make a move.', 'success');
         } else {
-            isMyTurn = false;
-            mySymbol = 'O';
-            setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
-        }
-
-        tossGameStartHandled = true;   // guard: block GAME_START from overriding this
-        return;
-    }
-
-    /* ── GAME_START ───────────────────────────────────────────────────────
-       FIX v2.1: Only process GAME_START if TOSS_RESULT was NOT already handled.
-       Some backends send both TOSS_RESULT and GAME_START; processing both would
-       flip isMyTurn twice, leaving the winner unable to move.
-    ────────────────────────────────────────────────────────────────────── */
-    if (payload.type === 'GAME_START') {
-        if (tossGameStartHandled) {
-            // TOSS_RESULT already set up the game — ignore this to avoid clobber
-            console.log('[Nexus] GAME_START ignored — TOSS_RESULT already handled.');
-            return;
-        }
-
-        // Fallback: if backend sends ONLY GAME_START (no TOSS_RESULT)
-        document.getElementById('toss-modal').style.display = 'none';
-        document.getElementById('btn-toss').style.display   = 'none';
-
-        const firstPlayer = payload.winner || payload.playerOne || payload.payload;
-
-        if (firstPlayer === currentUser) {
-            isMyTurn = true;
-            mySymbol = 'X';
-            setStatus('🎯 Your turn! Make a move.', 'success');
-        } else {
-            isMyTurn = false;
-            mySymbol = 'O';
+            isMyTurn = false; mySymbol = 'O';
             setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
         }
 
@@ -703,7 +667,24 @@ function handleRoomMessage(payload) {
         return;
     }
 
-    /* ── BOARD MOVE ───────────────────────────── */
+    if (payload.type === 'GAME_START') {
+        if (tossGameStartHandled) { return; }  // TOSS_RESULT already handled this
+        document.getElementById('toss-modal').style.display = 'none';
+        document.getElementById('btn-toss').style.display   = 'none';
+
+        const firstPlayer = payload.winner || payload.playerOne || payload.payload;
+        if (firstPlayer === currentUser) {
+            isMyTurn = true;  mySymbol = 'X';
+            setStatus('🎯 Your turn! Make a move.', 'success');
+        } else {
+            isMyTurn = false; mySymbol = 'O';
+            setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
+        }
+
+        tossGameStartHandled = true;
+        return;
+    }
+
     if (payload.boardPosition !== undefined && payload.boardPosition !== null) {
         const cells = document.getElementsByClassName('cell');
         const pos   = parseInt(payload.boardPosition);
@@ -752,7 +733,7 @@ function showWinnerModal(state) {
 }
 
 /* ══════════════════════════════════
-   WEBSOCKET CONNECTION
+   WEBSOCKET
 ══════════════════════════════════ */
 function connect(afterConnectCallback) {
     if (isConnected && stompClient && stompClient.connected) {
@@ -762,27 +743,25 @@ function connect(afterConnectCallback) {
     if (stompClient) { try { stompClient.disconnect(); } catch (e) {} stompClient = null; }
     isConnected = false;
 
-    const socket   = new SockJS(WS_ENDPOINT);
-    stompClient    = Stomp.over(socket);
+    const socket = new SockJS(WS_ENDPOINT);
+    stompClient  = Stomp.over(socket);
     stompClient.debug = null;
 
     stompClient.connect({}, function () {
         isConnected = true;
         console.log('✅ WebSocket connected');
 
-        stompClient.subscribe('/topic/lobby.status', function (payload) {
+        stompClient.subscribe('/topic/lobby.status', payload => {
             updateSingleUserStatus(JSON.parse(payload.body));
         });
 
-        stompClient.subscribe('/topic/challenges/' + currentUser, function (payload) {
+        stompClient.subscribe('/topic/challenges/' + currentUser, payload => {
             const message = JSON.parse(payload.body);
-
             if (message.type === 'CHALLENGE_REQUEST') {
                 currentPendingOpponent = message.sender;
                 currentRoomId = message.roomId;
                 document.getElementById('challenge-text').textContent = `Challenge from ${message.sender}!`;
                 document.getElementById('challenge-modal').style.display = 'flex';
-
             } else if (message.type === 'CHALLENGE_RESPONSE') {
                 document.getElementById('waiting-modal').style.display = 'none';
                 if (message.status === 'ACCEPTED')  setupGame(message.roomId, message.sender);

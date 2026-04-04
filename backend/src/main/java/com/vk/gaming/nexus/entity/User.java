@@ -1,13 +1,6 @@
-/*
- * Problem No. #175
- * Difficulty: Medium
- * Description: Refactored User Entity to replace @Data with specific Lombok annotations for JPA safety
- * Link: https://github.com/VijayKumarCode/Nexus
- * Time Complexity: O(1)
- * Space Complexity: O(1)
- */
 package com.vk.gaming.nexus.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -16,7 +9,7 @@ import lombok.*;
 @Getter
 @Setter
 @ToString
-@RequiredArgsConstructor
+@NoArgsConstructor
 public class User {
 
     @Id
@@ -30,21 +23,24 @@ public class User {
     private String username;
 
     @Column(unique = true, nullable = false)
+    @JsonIgnore             // BUG 7 FIX: never serialize email in lobby/leaderboard
     private String email;
 
     @Column(nullable = false)
+    @JsonIgnore             // BUG 7 FIX: never serialize password hash in any response
     private String password;
 
-    @Column(name = "is_online", nullable = false)
-    private Boolean isOnline = false;
-
     @Column(name = "is_enabled", nullable = false)
-    private boolean isEnabled = false;
+    @JsonIgnore             // BUG 7 FIX: internal flag, not needed by frontend
+    private boolean enabled = false;   // BUG 10 FIX: renamed from isEnabled → enabled
+    // Lombok now generates isEnabled()/setEnabled() cleanly
 
+    @JsonIgnore             // BUG 7 FIX: activation token must never leave the server
     @Column(unique = true)
     private String activationToken;
 
     @Column(name = "last_seen")
+    @JsonIgnore             // internal presence tracking, not needed by frontend
     private Long lastSeen;
 
     @Column(nullable = false)
@@ -56,6 +52,9 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserStatus status = UserStatus.OFFLINE;
+
+    // BUG 9 FIX: removed isOnline field entirely — it duplicated `status` and
+    // was never updated. Only `status` is used throughout UserService.
 
     public enum UserStatus {
         ONLINE,

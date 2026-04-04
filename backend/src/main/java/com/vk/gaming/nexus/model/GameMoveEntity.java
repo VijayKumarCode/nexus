@@ -29,8 +29,6 @@ public class GameMoveEntity {
     @Column(nullable = false)
     private String symbol;
 
-    private String gameState;
-
     @Column(name = "create_date", nullable = false, updatable = false)
     private LocalDateTime createDate;
 

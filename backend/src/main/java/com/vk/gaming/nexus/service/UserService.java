@@ -73,7 +73,7 @@ public class UserService {
         }
 
         user.setStatus(User.UserStatus.ONLINE);
-        user.setIsOnline(true);
+        // FIX: Removed user.setIsOnline(true)
         user.setLastSeen(System.currentTimeMillis());
 
         return userRepository.save(user);
@@ -84,7 +84,7 @@ public class UserService {
     public void logoutUser(String username) {
         userRepository.findByUsername(username).ifPresent(user -> {
             user.setStatus(User.UserStatus.OFFLINE);
-            user.setIsOnline(false);
+            // FIX: Removed user.setIsOnline(false)
             userRepository.save(user);
         });
     }
@@ -143,7 +143,7 @@ public class UserService {
     public void syncUserPresence(String username) {
         userRepository.findByUsername(username).ifPresent(u -> {
             u.setStatus(User.UserStatus.ONLINE);
-            u.setIsOnline(true);
+            // FIX: Removed u.setIsOnline(true)
             u.setLastSeen(System.currentTimeMillis());
             userRepository.save(u);
         });

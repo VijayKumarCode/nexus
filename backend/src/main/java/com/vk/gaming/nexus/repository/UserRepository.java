@@ -31,11 +31,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying
     @Transactional
     @Query("""
-        UPDATE User u 
-        SET u.status = 'OFFLINE', u.isOnline = false 
-        WHERE u.lastSeen < :cutoff 
-        AND u.status != 'OFFLINE'
-    """)
+    UPDATE User u 
+    SET u.status = com.vk.gaming.nexus.entity.User$UserStatus.OFFLINE
+    WHERE u.lastSeen < :cutoff 
+    AND u.status <> com.vk.gaming.nexus.entity.User$UserStatus.OFFLINE
+""")
     int markInactiveUsersOffline(@Param("cutoff") long cutoff);
 
     // 🔥 PERFORMANCE: Heartbeat update (no entity load)

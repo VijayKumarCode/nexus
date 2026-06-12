@@ -1,5 +1,7 @@
 spring:
-  profiles: prod
+  config:
+    activate:
+      on-profile: prod
 
   datasource:
     url: ${DB_URL}
@@ -15,11 +17,9 @@ spring:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
     properties:
-      # optional: remove if you want auto-detection
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
-# Prefer setting these via environment variables in your host/CI
 app:
   base-url: ${APP_BASE}
   mail:
@@ -32,4 +32,3 @@ server:
 cors:
   allowed-origins:
     - ${FRONTEND_URL:https://nexusgame.space}
-

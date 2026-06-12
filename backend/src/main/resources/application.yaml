@@ -2,7 +2,7 @@ spring:
   application:
     name: nexus
   profiles:
-    active: dev
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
   # Optional: import dotenv from backend/.env for local dev convenience
   config:

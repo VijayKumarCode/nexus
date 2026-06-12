@@ -1,0 +1,50 @@
+services:
+  # 1. Containerized Spring Boot Backend Web Service
+  - type: web
+    name: nexus-backend
+    env: docker
+    dockerfilePath: Dockerfile
+    dockerContext: backend
+    plan: starter # Recommended starter plan for Java/Spring Boot memory allocation (min 512MB RAM)
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: DB_URL
+        fromDatabase:
+          name: nexus-db
+          property: connectionString
+      - key: DB_USERNAME
+        fromDatabase:
+          name: nexus-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: nexus-db
+          property: password
+      - key: RESEND_API_KEY
+        sync: false # Paste your Resend API key in Render Dashboard
+      - key: APP_BASE
+        value: https://nexus-backend.onrender.com # Replace with your custom domain or Render URL
+      - key: MAIL_FROM
+        value: onboarding@resend.dev
+      - key: FRONTEND_URL
+        value: https://nexus-frontend.onrender.com # Replace with your static site custom URL
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+
+  # 2. Frontend HTML/CSS/JS Static Site
+  - type: web
+    name: nexus-frontend
+    env: static
+    buildCommand: "echo 'Static build complete'"
+    publishPath: frontend
+    envVars:
+      - key: BACKEND_URL
+        value: https://nexus-backend.onrender.com
+
+# 3. Managed PostgreSQL Database
+databases:
+  - name: nexus-db
+    plan: free
+    databaseName: nexus_db
+    user: postgres

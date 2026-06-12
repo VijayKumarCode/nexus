@@ -22,6 +22,8 @@ app:
     from: ${MAIL_FROM:onboarding@resend.dev}
   base-url: ${APP_BASE:http://localhost:8080}
   resend-api-key: ${RESEND_API_KEY:}
+  jwt-secret: ${JWT_SECRET:dGhpcy1pcy1hLXNlY3VyZS1hbmQtc3VmaWNpZW50bHktbG9uZy1kZXZlbG9wbWVudC1qd3Qtc2VjcmV0LWtleS1mb3ItbmV4dXMK}
+  jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
 cors:
   allowed-origins:

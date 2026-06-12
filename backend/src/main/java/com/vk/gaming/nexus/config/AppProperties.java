@@ -9,6 +9,8 @@ public class AppProperties {
     private String baseUrl;
     private String mailFrom;
     private List<String> allowedOrigins; // for CORS and WebSocket
+    private String jwtSecret;
+    private long jwtExpirationMs = 86400000; // 24 hours default
 
     public String getBaseUrl() {
         return baseUrl;
@@ -32,6 +34,22 @@ public class AppProperties {
 
     public void setAllowedOrigins(List<String> allowedOrigins) {
         this.allowedOrigins = allowedOrigins;
+    }
+
+    public String getJwtSecret() {
+        return jwtSecret;
+    }
+
+    public void setJwtSecret(String jwtSecret) {
+        this.jwtSecret = jwtSecret;
+    }
+
+    public long getJwtExpirationMs() {
+        return jwtExpirationMs;
+    }
+
+    public void setJwtExpirationMs(long jwtExpirationMs) {
+        this.jwtExpirationMs = jwtExpirationMs;
     }
 }
 

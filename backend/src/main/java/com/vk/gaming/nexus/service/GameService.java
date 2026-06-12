@@ -3,12 +3,14 @@ package com.vk.gaming.nexus.service;
 import com.vk.gaming.nexus.dto.GameMove;
 import com.vk.gaming.nexus.dto.GameSystemMessage;
 import com.vk.gaming.nexus.dto.TossRequest;
+import com.vk.gaming.nexus.dto.PlayerStatus;
 import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.model.GameMoveEntity;
 import com.vk.gaming.nexus.repository.GameMoveRepository;
 import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,7 @@ public class GameService {
     private final GameMoveRepository gameMoveRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     private final Map<String, String[]> roomPlayersMap = new ConcurrentHashMap<>();
     private final Map<String, String>   currentTurnMap = new ConcurrentHashMap<>();
@@ -260,5 +263,53 @@ public class GameService {
             u.setLastSeen(System.currentTimeMillis());
             userRepository.save(u);
         });
+    }
+
+    @Transactional
+    public void handlePlayerDisconnect(String username) {
+        log.info("Handling game disconnection for user: {}", username);
+        // Find if this player is in any active rooms
+        List<String> roomsToCleanup = new ArrayList<>();
+        for (Map.Entry<String, String[]> entry : roomPlayersMap.entrySet()) {
+            String roomId = entry.getKey();
+            String[] players = entry.getValue();
+            if (players != null && (username.equals(players[0]) || username.equals(players[1]))) {
+                roomsToCleanup.add(roomId);
+            }
+        }
+
+        for (String roomId : roomsToCleanup) {
+            log.info("Aborting game in room {} due to user disconnect: {}", roomId, username);
+            // Notify the other player
+            String[] players = roomPlayersMap.get(roomId);
+            if (players != null) {
+                String opponent = username.equals(players[0]) ? players[1] : players[0];
+                
+                // Construct and send abort message
+                GameSystemMessage abortMsg = new GameSystemMessage();
+                abortMsg.setType("GAME_ABORTED");
+                abortMsg.setWinner(opponent);
+                abortMsg.setLoser(username);
+                abortMsg.setPayload(username);
+                abortMsg.setMessage(username + " disconnected. You win!");
+                
+                try {
+                    messagingTemplate.convertAndSend("/topic/game/" + roomId, abortMsg);
+                } catch (Exception e) {
+                    log.error("Failed to send disconnect abort message to room {}: {}", roomId, e.getMessage());
+                }
+
+                // Make the opponent ONLINE again
+                resetUser(opponent);
+                try {
+                    messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(opponent, "ONLINE"));
+                } catch (Exception e) {
+                    log.error("Failed to send lobby status update for opponent {}: {}", opponent, e.getMessage());
+                }
+            }
+            
+            // Clean up database moves and local memory maps
+            resetGame(roomId);
+        }
     }
 }

@@ -7,7 +7,9 @@ import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "game_moves")
+@Table(name = "game_moves", uniqueConstraints = {
+    @UniqueConstraint(columnNames = {"roomId", "boardPosition"})
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

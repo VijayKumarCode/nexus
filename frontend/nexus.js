@@ -52,6 +52,18 @@ let isConnected            = false;
 let selectedStar           = 0;
 
 /* ══════════════════════════════════
+   AUTHENTICATED FETCH HELPER
+   ══════════════════════════════════ */
+async function fetchWithAuth(url, options = {}) {
+    const token = localStorage.getItem('nexus_token');
+    if (token) {
+        options.headers = options.headers || {};
+        options.headers['Authorization'] = 'Bearer ' + token;
+    }
+    return fetch(url, options);
+}
+
+/* ══════════════════════════════════
    UI HELPERS
 ══════════════════════════════════ */
 function showScreen(screenId) {
@@ -118,20 +130,22 @@ function submitFeedback() {
 ══════════════════════════════════ */
 window.onload = async function () {
     const saved = localStorage.getItem('nexus_user');
-    if (saved) {
+    const token = localStorage.getItem('nexus_token');
+    if (saved && token) {
         currentUser = saved;
         updateLobbyGreeting();
         try {
-            await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+            const res = await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+            if (!res.ok) throw new Error("Unauthorized");
             showScreen('lobby-screen');
             connect();
             startHeartbeat();
             startLobbyRefresh();
         } catch {
-            showScreen('home-screen');
+            logout();
         }
     } else {
-        showScreen('home-screen');
+        logout();
     }
 };
 
@@ -141,7 +155,7 @@ window.onload = async function () {
 function startHeartbeat() {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(async () => {
-        if (currentUser) await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+        if (currentUser) await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
     }, 10000);
 }
 
@@ -225,10 +239,12 @@ async function login() {
         });
 
         if (res.ok) {
-            currentUser = u;
-            localStorage.setItem('nexus_user', u);
+            const data = await res.json();
+            currentUser = data.user.username;
+            localStorage.setItem('nexus_user', currentUser);
+            localStorage.setItem('nexus_token', data.token);
             updateLobbyGreeting();
-            await fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+            await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
             startHeartbeat();
             showScreen('lobby-screen');
             connect();
@@ -249,6 +265,7 @@ async function login() {
 /* BUG 2 FIX: logout now fully resets ALL game/session state */
 function logout() {
     localStorage.removeItem('nexus_user');
+    localStorage.removeItem('nexus_token');
     currentUser            = '';
     opponentUser           = null;
     currentRoomId          = '';
@@ -345,7 +362,7 @@ function startLobbyRefresh() {
 async function refreshLobby() {
     if (document.getElementById('lobby-screen').style.display === 'none') return;
     try {
-        const res   = await fetch(`${API_BASE}/lobby`);
+        const res   = await fetchWithAuth(`${API_BASE}/lobby`);
         if (!res.ok) return;
         const users = await res.json();
         const list  = document.getElementById('online-users-list');
@@ -392,7 +409,7 @@ async function refreshLobby() {
 
 async function refreshLeaderboard() {
     try {
-        const res = await fetch(`${API_BASE}/leaderboard`);
+        const res = await fetchWithAuth(`${API_BASE}/leaderboard`);
         if (!res.ok) return;
         const players = await res.json();
         const list    = document.getElementById('leaderboard-list');
@@ -509,7 +526,7 @@ function leaveGame() {
         stompClient.send('/app/game.abort', {}, JSON.stringify({
             sender: currentUser, roomId: currentRoomId, type: 'GAME_ABORTED'
         }));
-        fetch(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+        fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
     }
 
     if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
@@ -747,7 +764,7 @@ function connect(afterConnectCallback) {
     stompClient  = Stomp.over(socket);
     stompClient.debug = null;
 
-    stompClient.connect({ username: currentUser }, function () {
+    stompClient.connect({ Authorization: 'Bearer ' + localStorage.getItem('nexus_token') }, function () {
         isConnected = true;
         console.log('✅ WebSocket connected');
 

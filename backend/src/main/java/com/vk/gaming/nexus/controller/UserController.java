@@ -9,11 +9,13 @@
 package com.vk.gaming.nexus.controller;
 
 import com.vk.gaming.nexus.dto.AuthRequest;
+import com.vk.gaming.nexus.dto.AuthResponse;
 import com.vk.gaming.nexus.dto.EmailRequest;
 import com.vk.gaming.nexus.dto.PlayerStatus;
 import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.repository.UserRepository;
 import com.vk.gaming.nexus.service.UserService;
+import com.vk.gaming.nexus.service.JwtService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,7 @@ public class UserController {
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final UserService userService;
+    private final JwtService jwtService;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody AuthRequest request) {
@@ -69,8 +72,9 @@ public class UserController {
     public ResponseEntity<?> login(@RequestBody AuthRequest request) {
         try {
             User user = userService.loginUser(request);
+            String token = jwtService.generateToken(user.getUsername());
             messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(user.getUsername(), "ONLINE"));
-            return ResponseEntity.ok(user);
+            return ResponseEntity.ok(new AuthResponse(token, user));
         } catch (RuntimeException e) {
             return ResponseEntity.status(401).body(java.util.Map.of("error", e.getMessage()));
         }

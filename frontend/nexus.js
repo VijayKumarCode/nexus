@@ -23,7 +23,7 @@
 const BACKEND_URL = (window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1')
     ? ''
-    : 'https://nexus-production-25f1.up.railway.app';
+    : 'https://nexus-yxa3.onrender.com';
 
 const API_BASE    = BACKEND_URL + '/api/users';
 const WS_ENDPOINT = BACKEND_URL + '/game-websocket';

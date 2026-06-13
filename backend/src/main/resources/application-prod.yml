@@ -27,7 +27,8 @@ app:
   jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
   allowed-origins:
-    - ${FRONTEND_URL:https://nexusgame.space}
+    - https://nexusgame.space
+    - https://www.nexusgame.space
 
   resend-api-key: ${RESEND_API_KEY}
 

@@ -1,5 +1,6 @@
 package com.vk.gaming.nexus.config;
 
+import com.vk.gaming.nexus.repository.UserRepository;
 import com.vk.gaming.nexus.service.JwtService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -24,7 +25,7 @@ import java.io.IOException;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
-    private final UserDetailsService userDetailsService;
+    private final UserRepository userRepository;
 
     @Override
     protected void doFilterInternal(
@@ -52,20 +53,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+                var user = userRepository.findByUsername(username)
+                        .orElse(null);
 
-                if (!userDetails.isEnabled()) {
+                if (user == null) {
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                if (!user.isEnabled()) {
                     log.warn("Authentication attempted for disabled user: {}", username);
                     filterChain.doFilter(request, response);
                     return;
                 }
 
-                if (jwtService.validateToken(jwt, userDetails.getUsername())) {
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                            userDetails,
-                            null,
-                            userDetails.getAuthorities()
-                    );
+                if (jwtService.validateToken(jwt, user.getUsername())) {
+                    UsernamePasswordAuthenticationToken authToken =
+                            new UsernamePasswordAuthenticationToken(
+                                    user.getUsername(),
+                                    null,
+                                    java.util.List.of()
+                            );
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                     log.debug("Authenticated user: {}, URI: {}", username, request.getRequestURI());

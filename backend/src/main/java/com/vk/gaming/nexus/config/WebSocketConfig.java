@@ -1,6 +1,7 @@
 package com.vk.gaming.nexus.config;
 
 import com.vk.gaming.nexus.service.JwtService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -17,6 +18,7 @@ import org.springframework.web.socket.config.annotation.*;
 
 @Configuration
 @EnableWebSocketMessageBroker
+@Slf4j
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final AppProperties appProperties;
@@ -65,15 +67,20 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             String username = jwtService.extractUsername(jwt);
                             if (username != null) {
                                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                                if (jwtService.validateToken(jwt, userDetails.getUsername())) {
-                                    UsernamePasswordAuthenticationToken authToken = 
+                                if (userDetails.isEnabled() && jwtService.validateToken(jwt, userDetails.getUsername())) {
+                                    UsernamePasswordAuthenticationToken authToken =
                                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                                     accessor.setUser(authToken);
+                                    log.debug("WebSocket CONNECT authenticated for user: {}", username);
+                                } else {
+                                    log.warn("WebSocket CONNECT: invalid token or disabled user: {}", username);
                                 }
                             }
                         } catch (Exception e) {
-                            // Token invalid or expired
+                            log.warn("WebSocket CONNECT: JWT validation failed: {}", e.getMessage());
                         }
+                    } else {
+                        log.debug("WebSocket CONNECT: no Authorization header provided");
                     }
                 }
                 return message;

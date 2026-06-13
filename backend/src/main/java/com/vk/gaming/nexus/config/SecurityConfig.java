@@ -3,6 +3,9 @@ package com.vk.gaming.nexus.config;
 import com.vk.gaming.nexus.repository.UserRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -46,20 +49,26 @@ public class SecurityConfig {
     }
 
     @Bean
+    public AuthenticationManager authenticationManager() {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userDetailsService());
+        provider.setPasswordEncoder(passwordEncoder());
+        return new ProviderManager(provider);
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Public Auth & Account Recovery endpoints
-                        .requestMatchers("/api/users/login", "/api/users/register", "/api/users/activate", "/api/users/resend-activation").permitAll()
+                        .requestMatchers("/api/users/login", "/api/users/register",
+                                "/api/users/activate", "/api/users/resend-activation").permitAll()
                         .requestMatchers("/api/recovery/**").permitAll()
                         .requestMatchers("/api/users/check-username").permitAll()
                         .requestMatchers("/api/users/health").permitAll()
-                        // Public WebSocket handshake endpoint
                         .requestMatchers("/game-websocket/**").permitAll()
-                        // Require authentication for everything else
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
@@ -79,6 +88,7 @@ public class SecurityConfig {
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
         config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

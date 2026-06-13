@@ -5,6 +5,7 @@ import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -21,6 +22,7 @@ public class AccountRecoveryService {
         otpService.generateAndSendOtp(email);
     }
 
+    @Transactional(readOnly = true)
     public String recoverUsername(String email, String otp) {
         if (!otpService.verifyOtp(email, otp)) {
             throw new RuntimeException("Invalid OTP");
@@ -31,6 +33,7 @@ public class AccountRecoveryService {
                 .getUsername();
     }
 
+    @Transactional
     public void resetPassword(String email, String otp, String newPassword) {
         if (!otpService.verifyOtp(email, otp)) {
             throw new RuntimeException("Invalid OTP");

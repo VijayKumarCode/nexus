@@ -5,7 +5,8 @@ import com.vk.gaming.nexus.dto.GameSystemMessage;
 import com.vk.gaming.nexus.dto.TossRequest;
 import com.vk.gaming.nexus.dto.PlayerStatus;
 import com.vk.gaming.nexus.entity.User;
-import com.vk.gaming.nexus.model.GameMoveEntity;
+import com.vk.gaming.nexus.entity.GameMoveEntity;
+import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.repository.GameMoveRepository;
 import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,105 +28,103 @@ public class GameService {
     private final UserService userService;
     private final SimpMessagingTemplate messagingTemplate;
 
-    private final Map<String, String[]> roomPlayersMap = new ConcurrentHashMap<>();
-    private final Map<String, String>   currentTurnMap = new ConcurrentHashMap<>();
-    private final Map<String, String>   playerXMap     = new ConcurrentHashMap<>();
-    private final Map<String, String>   playerOMap     = new ConcurrentHashMap<>();
-    private final Map<String, String>   tossWinnerMap  = new ConcurrentHashMap<>();
+    private final Map<String, String[]> roomPlayers = new ConcurrentHashMap<>();
+    private final Map<String, String> currentTurn = new ConcurrentHashMap<>();
+    private final Map<String, String> playerX = new ConcurrentHashMap<>();
+    private final Map<String, String> playerO = new ConcurrentHashMap<>();
+    private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
 
-    // ========================= GAME MOVE =========================
+    public boolean isRoomParticipant(String roomId, String username) {
+        String[] players = roomPlayers.get(roomId);
+        if (players == null) {
+            return false;
+        }
+        return username.equals(players[0]) || username.equals(players[1]);
+    }
+
     @Transactional
     public GameMove processGameMove(GameMove incomingMove) {
-        String rId = incomingMove.getRoomId();
+        String roomId = incomingMove.getRoomId();
 
-        if (rId == null || rId.isBlank()) {
+        if (roomId == null || roomId.isBlank()) {
             log.error("processGameMove — null/blank roomId, move rejected");
             return null;
         }
 
         log.info("processGameMove — room={} player={} pos={}",
-                rId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition());
+                roomId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition());
 
-        if (!currentTurnMap.containsKey(rId)) {
-            log.warn("currentTurnMap miss for room={} — attempting DB recovery", rId);
-            recoverGameStateFromDB(rId);
+        if (!currentTurn.containsKey(roomId)) {
+            log.warn("currentTurn miss for room={} — attempting DB recovery", roomId);
+            recoverGameStateFromDB(roomId);
         }
 
-        log.info("State — currentTurn={} playerX={} playerO={}",
-                currentTurnMap.get(rId), playerXMap.get(rId), playerOMap.get(rId));
-
-        String expectedPlayer = currentTurnMap.get(rId);
+        String expectedPlayer = currentTurn.get(roomId);
         if (expectedPlayer == null) {
-            log.error("currentTurnMap null after recovery for room={} — move rejected", rId);
+            log.error("currentTurn null after recovery for room={} — move rejected", roomId);
             return null;
         }
 
         if (!incomingMove.getPlayerUsername().equals(expectedPlayer)) {
             log.warn("Wrong turn — room={} expected={} got={}",
-                    rId, expectedPlayer, incomingMove.getPlayerUsername());
+                    roomId, expectedPlayer, incomingMove.getPlayerUsername());
             return null;
         }
 
-        if (gameMoveRepository.existsByRoomIdAndBoardPosition(rId, incomingMove.getBoardPosition())) {
-            log.warn("Duplicate move pos={} room={}", incomingMove.getBoardPosition(), rId);
+        if (gameMoveRepository.existsByRoomIdAndBoardPosition(roomId, incomingMove.getBoardPosition())) {
+            log.warn("Duplicate move pos={} room={}", incomingMove.getBoardPosition(), roomId);
             return null;
         }
 
-        String symbol = incomingMove.getPlayerUsername().equals(playerXMap.get(rId)) ? "X" : "O";
+        String symbol = incomingMove.getPlayerUsername().equals(playerX.get(roomId)) ? "X" : "O";
         incomingMove.setSymbol(symbol);
 
         log.info("Move accepted — room={} player={} pos={} symbol={}",
-                rId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition(), symbol);
+                roomId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition(), symbol);
 
         GameMoveEntity entity = new GameMoveEntity();
-        entity.setRoomId(rId);
+        entity.setRoomId(roomId);
         entity.setPlayerUsername(incomingMove.getPlayerUsername());
         entity.setBoardPosition(incomingMove.getBoardPosition());
         entity.setSymbol(symbol);
 
         try {
-            GameMoveEntity saved = gameMoveRepository.save(entity);
-            log.info("Move saved — id={} room={} pos={} symbol={}",
-                    saved.getId(), rId, saved.getBoardPosition(), saved.getSymbol());
+            gameMoveRepository.save(entity);
         } catch (Exception e) {
-            log.error("DB save failed — room={} error={}", rId, e.getMessage(), e);
+            log.error("DB save failed — room={} error={}", roomId, e.getMessage(), e);
             return null;
         }
 
-        char[] board        = buildBoard(rId);
+        char[] board = buildBoard(roomId);
         String winnerSymbol = checkWinner(board);
 
         if (winnerSymbol != null) {
-            String winner = "X".equals(winnerSymbol) ? playerXMap.get(rId) : playerOMap.get(rId);
-            String loser  = "X".equals(winnerSymbol) ? playerOMap.get(rId) : playerXMap.get(rId);
+            String winner = "X".equals(winnerSymbol) ? playerX.get(roomId) : playerO.get(roomId);
+            String loser = "X".equals(winnerSymbol) ? playerO.get(roomId) : playerX.get(roomId);
             userService.incrementWins(winner);
             userService.incrementLosses(loser);
             incomingMove.setGameState("WINNER_" + winnerSymbol);
-            log.info("Game over — room={} winner={}", rId, winner);
-            currentTurnMap.remove(rId);
+            log.info("Game over — room={} winner={}", roomId, winner);
+            currentTurn.remove(roomId);
             return incomingMove;
         }
 
-        boolean isDraw = true;
-        for (char c : board) { if (c == '-') { isDraw = false; break; } }
-        if (isDraw) {
+        if (isBoardFull(board)) {
             incomingMove.setGameState("DRAW");
-            log.info("Draw — room={}", rId);
-            currentTurnMap.remove(rId);
+            log.info("Draw — room={}", roomId);
+            currentTurn.remove(roomId);
             return incomingMove;
         }
 
-        String nextPlayer = "X".equals(symbol) ? playerOMap.get(rId) : playerXMap.get(rId);
-        currentTurnMap.put(rId, nextPlayer);
+        String nextPlayer = "X".equals(symbol) ? playerO.get(roomId) : playerX.get(roomId);
+        currentTurn.put(roomId, nextPlayer);
         incomingMove.setGameState("ONGOING");
-        log.info("Next turn — room={} nextPlayer={}", rId, nextPlayer);
+        log.info("Next turn — room={} nextPlayer={}", roomId, nextPlayer);
         return incomingMove;
     }
 
-    // ========================= BOARD =========================
     private char[] buildBoard(String roomId) {
-        List<GameMoveEntity> history =
-                gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
+        List<GameMoveEntity> history = gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
         char[] board = new char[9];
         Arrays.fill(board, '-');
         for (GameMoveEntity move : history) {
@@ -136,21 +135,27 @@ public class GameService {
 
     private String checkWinner(char[] b) {
         int[][] patterns = {
-                {0,1,2},{3,4,5},{6,7,8},
-                {0,3,6},{1,4,7},{2,5,8},
-                {0,4,8},{2,4,6}
+                {0, 1, 2}, {3, 4, 5}, {6, 7, 8},
+                {0, 3, 6}, {1, 4, 7}, {2, 5, 8},
+                {0, 4, 8}, {2, 4, 6}
         };
         for (int[] p : patterns) {
-            if (b[p[0]] != '-' && b[p[0]] == b[p[1]] && b[p[1]] == b[p[2]])
+            if (b[p[0]] != '-' && b[p[0]] == b[p[1]] && b[p[1]] == b[p[2]]) {
                 return String.valueOf(b[p[0]]);
+            }
         }
         return null;
     }
 
-    // ========================= RECOVERY =========================
+    private boolean isBoardFull(char[] board) {
+        for (char c : board) {
+            if (c == '-') return false;
+        }
+        return true;
+    }
+
     private void recoverGameStateFromDB(String roomId) {
-        List<GameMoveEntity> history =
-                gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
+        List<GameMoveEntity> history = gameMoveRepository.findByRoomIdOrderByCreateDateAsc(roomId);
 
         if (history.isEmpty()) {
             log.warn("Recovery failed — no DB history for room={}", roomId);
@@ -158,31 +163,30 @@ public class GameService {
         }
 
         for (GameMoveEntity m : history) {
-            if ("X".equals(m.getSymbol()) && !playerXMap.containsKey(roomId))
-                playerXMap.put(roomId, m.getPlayerUsername());
-            else if ("O".equals(m.getSymbol()) && !playerOMap.containsKey(roomId))
-                playerOMap.put(roomId, m.getPlayerUsername());
-            if (playerXMap.containsKey(roomId) && playerOMap.containsKey(roomId)) break;
+            if ("X".equals(m.getSymbol()) && !playerX.containsKey(roomId))
+                playerX.put(roomId, m.getPlayerUsername());
+            else if ("O".equals(m.getSymbol()) && !playerO.containsKey(roomId))
+                playerO.put(roomId, m.getPlayerUsername());
+            if (playerX.containsKey(roomId) && playerO.containsKey(roomId)) break;
         }
 
-        String px = playerXMap.get(roomId);
-        String po = playerOMap.get(roomId);
+        String px = playerX.get(roomId);
+        String po = playerO.get(roomId);
         if (px != null && po != null)
-            roomPlayersMap.put(roomId, new String[]{px, po});
+            roomPlayers.put(roomId, new String[]{px, po});
 
         GameMoveEntity last = history.get(history.size() - 1);
         if ("X".equals(last.getSymbol()) && po != null) {
-            currentTurnMap.put(roomId, po);
+            currentTurn.put(roomId, po);
             log.info("Recovery OK — room={} X={} O={} next={}", roomId, px, po, po);
         } else if ("O".equals(last.getSymbol()) && px != null) {
-            currentTurnMap.put(roomId, px);
+            currentTurn.put(roomId, px);
             log.info("Recovery OK — room={} X={} O={} next={}", roomId, px, po, px);
         } else {
-            log.warn("Recovery partial — room={} X={} O=null, next turn unknown", roomId, px);
+            log.warn("Recovery partial — room={} X={} O=null", roomId, px);
         }
     }
 
-    // ========================= TOSS =========================
     public GameSystemMessage processToss(TossRequest request) {
         String roomId = request.getRoomId();
 
@@ -191,12 +195,12 @@ public class GameService {
                     + roomId + " p1=" + request.getPlayerOne() + " p2=" + request.getPlayerTwo());
         }
 
-        boolean coin  = new Random().nextBoolean();
+        boolean coin = new Random().nextBoolean();
         String winner = coin ? request.getPlayerOne() : request.getPlayerTwo();
-        String loser  = coin ? request.getPlayerTwo() : request.getPlayerOne();
+        String loser = coin ? request.getPlayerTwo() : request.getPlayerOne();
 
-        tossWinnerMap.put(roomId, winner);
-        roomPlayersMap.put(roomId, new String[]{request.getPlayerOne(), request.getPlayerTwo()});
+        tossWinner.put(roomId, winner);
+        roomPlayers.put(roomId, new String[]{request.getPlayerOne(), request.getPlayerTwo()});
         log.info("Toss — room={} winner={}", roomId, winner);
 
         GameSystemMessage res = new GameSystemMessage();
@@ -208,24 +212,22 @@ public class GameService {
         return res;
     }
 
-    /* BUG 12+15 FIX: removed @Transactional (no DB ops), removed unused
-       ignoredWinner/ignoredLoser params — backend always uses tossWinnerMap. */
     public GameSystemMessage processTossDecision(String roomId, String choice) {
-        String winner = tossWinnerMap.get(roomId);
+        String winner = tossWinner.get(roomId);
         if (winner == null)
             throw new RuntimeException("Toss not initialized for room=" + roomId);
 
-        String[] players = roomPlayersMap.get(roomId);
+        String[] players = roomPlayers.get(roomId);
         if (players == null)
-            throw new RuntimeException("roomPlayersMap missing for room=" + roomId);
+            throw new RuntimeException("roomPlayers missing for room=" + roomId);
 
-        String loser       = winner.equals(players[0]) ? players[1] : players[0];
+        String loser = winner.equals(players[0]) ? players[1] : players[0];
         String firstPlayer = "X".equalsIgnoreCase(choice) ? winner : loser;
-        String secondPlayer= "X".equalsIgnoreCase(choice) ? loser  : winner;
+        String secondPlayer = "X".equalsIgnoreCase(choice) ? loser : winner;
 
-        playerXMap.put(roomId, firstPlayer);
-        playerOMap.put(roomId, secondPlayer);
-        currentTurnMap.put(roomId, firstPlayer);
+        playerX.put(roomId, firstPlayer);
+        playerO.put(roomId, secondPlayer);
+        currentTurn.put(roomId, firstPlayer);
 
         log.info("Toss decision — room={} choice={} X={} O={}", roomId, choice, firstPlayer, secondPlayer);
 
@@ -238,15 +240,14 @@ public class GameService {
         return res;
     }
 
-    // ========================= CLEANUP =========================
     @Transactional
     public void resetGame(String roomId) {
         gameMoveRepository.deleteByRoomId(roomId);
-        currentTurnMap.remove(roomId);
-        playerXMap.remove(roomId);
-        playerOMap.remove(roomId);
-        tossWinnerMap.remove(roomId);
-        roomPlayersMap.remove(roomId);
+        currentTurn.remove(roomId);
+        playerX.remove(roomId);
+        playerO.remove(roomId);
+        tossWinner.remove(roomId);
+        roomPlayers.remove(roomId);
         log.info("Game reset — room={}", roomId);
     }
 
@@ -254,12 +255,15 @@ public class GameService {
     public void markPlayersOnlineByRoom(String roomId) {
         resetGame(roomId);
         String[] parts = roomId.split("_");
-        if (parts.length >= 2) { resetUser(parts[0]); resetUser(parts[1]); }
+        if (parts.length >= 2) {
+            resetUser(parts[0]);
+            resetUser(parts[1]);
+        }
     }
 
     private void resetUser(String username) {
         userRepository.findByUsername(username).ifPresent(u -> {
-            u.setStatus(User.UserStatus.ONLINE);
+            u.setStatus(UserStatus.ONLINE);
             u.setLastSeen(System.currentTimeMillis());
             userRepository.save(u);
         });
@@ -268,9 +272,8 @@ public class GameService {
     @Transactional
     public void handlePlayerDisconnect(String username) {
         log.info("Handling game disconnection for user: {}", username);
-        // Find if this player is in any active rooms
         List<String> roomsToCleanup = new ArrayList<>();
-        for (Map.Entry<String, String[]> entry : roomPlayersMap.entrySet()) {
+        for (Map.Entry<String, String[]> entry : roomPlayers.entrySet()) {
             String roomId = entry.getKey();
             String[] players = entry.getValue();
             if (players != null && (username.equals(players[0]) || username.equals(players[1]))) {
@@ -280,35 +283,30 @@ public class GameService {
 
         for (String roomId : roomsToCleanup) {
             log.info("Aborting game in room {} due to user disconnect: {}", roomId, username);
-            // Notify the other player
-            String[] players = roomPlayersMap.get(roomId);
+            String[] players = roomPlayers.get(roomId);
             if (players != null) {
                 String opponent = username.equals(players[0]) ? players[1] : players[0];
-                
-                // Construct and send abort message
+
                 GameSystemMessage abortMsg = new GameSystemMessage();
                 abortMsg.setType("GAME_ABORTED");
                 abortMsg.setWinner(opponent);
                 abortMsg.setLoser(username);
                 abortMsg.setPayload(username);
                 abortMsg.setMessage(username + " disconnected. You win!");
-                
+
                 try {
                     messagingTemplate.convertAndSend("/topic/game/" + roomId, abortMsg);
                 } catch (Exception e) {
                     log.error("Failed to send disconnect abort message to room {}: {}", roomId, e.getMessage());
                 }
 
-                // Make the opponent ONLINE again
                 resetUser(opponent);
                 try {
-                    messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(opponent, "ONLINE"));
+                    messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(opponent, UserStatus.ONLINE));
                 } catch (Exception e) {
                     log.error("Failed to send lobby status update for opponent {}: {}", opponent, e.getMessage());
                 }
             }
-            
-            // Clean up database moves and local memory maps
             resetGame(roomId);
         }
     }

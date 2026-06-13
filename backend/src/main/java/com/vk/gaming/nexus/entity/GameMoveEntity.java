@@ -1,14 +1,17 @@
-package com.vk.gaming.nexus.model;
+package com.vk.gaming.nexus.entity;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
+
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "game_moves", uniqueConstraints = {
-    @UniqueConstraint(columnNames = {"roomId", "boardPosition"})
+@Table(name = "game_moves", indexes = {
+        @Index(name = "idx_gamemove_room", columnList = "roomId")
+}, uniqueConstraints = {
+        @UniqueConstraint(columnNames = {"roomId", "boardPosition"})
 })
 @Data
 @NoArgsConstructor

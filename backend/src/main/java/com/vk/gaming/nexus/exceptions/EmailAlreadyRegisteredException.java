@@ -1,4 +1,4 @@
-package com.vk.gaming.nexus.exception;
+package com.vk.gaming.nexus.exceptions;
 
 public class EmailAlreadyRegisteredException extends NexusBaseException {
     public EmailAlreadyRegisteredException(String email) {

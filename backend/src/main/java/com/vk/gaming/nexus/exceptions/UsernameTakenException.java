@@ -1,4 +1,4 @@
-package com.vk.gaming.nexus.exception;
+package com.vk.gaming.nexus.exceptions;
 
 public class UsernameTakenException extends NexusBaseException {
     public UsernameTakenException(String username) {

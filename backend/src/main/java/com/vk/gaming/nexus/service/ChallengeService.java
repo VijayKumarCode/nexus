@@ -1,12 +1,17 @@
 package com.vk.gaming.nexus.service;
 
-import com.vk.gaming.nexus.dto.*;
+import com.vk.gaming.nexus.dto.ChallengeMessage;
+import com.vk.gaming.nexus.dto.PlayerStatus;
+import com.vk.gaming.nexus.entity.ChallengeEntity;
 import com.vk.gaming.nexus.entity.User;
-import com.vk.gaming.nexus.model.ChallengeEntity;
+import com.vk.gaming.nexus.enums.ChallengeStatus;
+import com.vk.gaming.nexus.enums.MessageType;
+import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.repository.ChallengeRepository;
 import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -24,11 +29,14 @@ public class ChallengeService {
     private final SimpMessagingTemplate messagingTemplate;
     private final UserRepository userRepository;
 
+    @Value("${challenge.expiry-seconds:30}")
+    private long challengeExpirySeconds;
 
-    // ========================= CREATE =========================
+    @Value("${challenge.expiry-check-rate-ms:5000}")
+    private long challengeExpiryCheckRateMs;
+
     @Transactional
     public void createChallenge(ChallengeMessage message) {
-
         challengeRepository.deleteByRoomId(message.getRoomId());
 
         LocalDateTime now = LocalDateTime.now();
@@ -38,15 +46,14 @@ public class ChallengeService {
                 .receiver(message.getReceiver())
                 .roomId(message.getRoomId())
                 .status(ChallengeStatus.PENDING)
-                .expiresAt(now.plusSeconds(30)) // 🔥 CLEAN TTL
+                .expiresAt(now.plusSeconds(challengeExpirySeconds))
                 .build();
 
         challengeRepository.save(entity);
 
-        updatePlayerStatus(message.getSender(), User.UserStatus.ONLINE);
+        updatePlayerStatus(message.getSender(), UserStatus.ONLINE);
     }
 
-    // ========================= RESPOND =========================
     @Transactional
     public void respondToChallenge(ChallengeMessage message) {
         if (message.getStatus() == ChallengeStatus.ACCEPTED) {
@@ -59,19 +66,16 @@ public class ChallengeService {
         }
     }
 
-    // ========================= ACCEPT =========================
     @Transactional
     public void acceptChallenge(String roomId) {
-
         challengeRepository.findTopByRoomIdOrderByCreatedAtDesc(roomId).ifPresent(challenge -> {
 
             challenge.setStatus(ChallengeStatus.ACCEPTED);
             challengeRepository.save(challenge);
 
-            updatePlayerStatus(challenge.getSender(), User.UserStatus.IN_GAME);
-            updatePlayerStatus(challenge.getReceiver(), User.UserStatus.IN_GAME);
+            updatePlayerStatus(challenge.getSender(), UserStatus.IN_GAME);
+            updatePlayerStatus(challenge.getReceiver(), UserStatus.IN_GAME);
 
-            // Cancel other pending challenges
             challengeRepository.cancelOtherPending(
                     challenge.getSender(), roomId,
                     ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
@@ -81,33 +85,22 @@ public class ChallengeService {
                     ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
 
             messagingTemplate.convertAndSend("/topic/lobby.status",
-                    new PlayerStatus(challenge.getSender(), "IN_GAME"));
+                    new PlayerStatus(challenge.getSender(), UserStatus.IN_GAME));
 
             messagingTemplate.convertAndSend("/topic/lobby.status",
-                    new PlayerStatus(challenge.getReceiver(), "IN_GAME"));
+                    new PlayerStatus(challenge.getReceiver(), UserStatus.IN_GAME));
 
             log.info("Game started in room {}", roomId);
         });
     }
 
-    // ========================= DISCONNECT CLEANUP =========================
     @Transactional
     public void cancelStaleChallenges(String username) {
-
         List<ChallengeEntity> pending =
-                challengeRepository.findPendingByUser(
-                        username,
-                        ChallengeStatus.PENDING
-                );
+                challengeRepository.findPendingByUser(username, ChallengeStatus.PENDING);
 
-        // 🔥 Bulk update (FAST)
-        challengeRepository.cancelAllPendingForUser(
-                username,
-                ChallengeStatus.CANCELLED,
-                ChallengeStatus.PENDING
-        );
+        challengeRepository.cancelAllPendingForUser(username, ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
 
-        // 🔥 Notify affected users
         for (ChallengeEntity stale : pending) {
             notifyCancellation(username, stale);
         }
@@ -115,28 +108,16 @@ public class ChallengeService {
         log.info("Cancelled {} stale challenges for {}", pending.size(), username);
     }
 
-    // ========================= AUTO EXPIRY (🔥 NEW FEATURE) =========================
-    @Scheduled(fixedRate = 5000)
+    @Scheduled(fixedRateString = "${challenge.expiry-check-rate-ms:5000}")
     @Transactional
     public void expireOldChallenges() {
-
         LocalDateTime now = LocalDateTime.now();
 
-        // Fetch only expired
         List<ChallengeEntity> expired =
-                challengeRepository.findByStatusAndExpiresAtBefore(
-                        ChallengeStatus.PENDING,
-                        now
-                );
+                challengeRepository.findByStatusAndExpiresAtBefore(ChallengeStatus.PENDING, now);
 
-        // Bulk cancel
-        int updated = challengeRepository.cancelExpiredChallenges(
-                now,
-                ChallengeStatus.CANCELLED,
-                ChallengeStatus.PENDING
-        );
+        int updated = challengeRepository.cancelExpiredChallenges(now, ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
 
-        // Notify users
         for (ChallengeEntity c : expired) {
             notifyCancellation("SYSTEM", c);
         }
@@ -146,9 +127,7 @@ public class ChallengeService {
         }
     }
 
-    // ========================= NOTIFY =========================
     private void notifyCancellation(String requester, ChallengeEntity stale) {
-
         ChallengeMessage msg = new ChallengeMessage();
         msg.setType(MessageType.CHALLENGE_RESPONSE);
         msg.setStatus(ChallengeStatus.CANCELLED);
@@ -164,8 +143,7 @@ public class ChallengeService {
         messagingTemplate.convertAndSend("/topic/challenges/" + target, msg);
     }
 
-    // ========================= STATUS =========================
-    private void updatePlayerStatus(String username, User.UserStatus status) {
+    private void updatePlayerStatus(String username, UserStatus status) {
         userRepository.findByUsername(username).ifPresent(u -> {
             u.setStatus(status);
             u.setLastSeen(System.currentTimeMillis());

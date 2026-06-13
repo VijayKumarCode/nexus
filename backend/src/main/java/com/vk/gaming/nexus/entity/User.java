@@ -1,6 +1,7 @@
 package com.vk.gaming.nexus.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.vk.gaming.nexus.enums.UserStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,7 +9,6 @@ import lombok.*;
 @Table(name = "users")
 @Getter
 @Setter
-@ToString
 @NoArgsConstructor
 public class User {
 
@@ -23,24 +23,23 @@ public class User {
     private String username;
 
     @Column(unique = true, nullable = false)
-    @JsonIgnore             // BUG 7 FIX: never serialize email in lobby/leaderboard
+    @JsonIgnore
     private String email;
 
     @Column(nullable = false)
-    @JsonIgnore             // BUG 7 FIX: never serialize password hash in any response
+    @JsonIgnore
     private String password;
 
     @Column(name = "is_enabled", nullable = false)
-    @JsonIgnore             // BUG 7 FIX: internal flag, not needed by frontend
-    private boolean enabled = false;   // BUG 10 FIX: renamed from isEnabled → enabled
-    // Lombok now generates isEnabled()/setEnabled() cleanly
+    @JsonIgnore
+    private boolean enabled = false;
 
-    @JsonIgnore             // BUG 7 FIX: activation token must never leave the server
+    @JsonIgnore
     @Column(unique = true)
     private String activationToken;
 
     @Column(name = "last_seen")
-    @JsonIgnore             // internal presence tracking, not needed by frontend
+    @JsonIgnore
     private Long lastSeen;
 
     @Column(nullable = false)
@@ -52,14 +51,4 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserStatus status = UserStatus.OFFLINE;
-
-    // BUG 9 FIX: removed isOnline field entirely — it duplicated `status` and
-    // was never updated. Only `status` is used throughout UserService.
-
-    public enum UserStatus {
-        ONLINE,
-        IDLE,
-        IN_GAME,
-        OFFLINE
-    }
 }

@@ -6,6 +6,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,6 +20,7 @@ import java.io.IOException;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
@@ -31,19 +33,33 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
         final String authHeader = request.getHeader("Authorization");
-        final String jwt;
-        final String username;
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        jwt = authHeader.substring(7);
+        final String jwt = authHeader.substring(7);
+        final String username;
+
         try {
             username = jwtService.extractUsername(jwt);
-            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+        } catch (Exception e) {
+            log.warn("Failed to extract username from JWT: {}", e.getMessage());
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            try {
                 UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+
+                if (!userDetails.isEnabled()) {
+                    log.warn("Authentication attempted for disabled user: {}", username);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
                 if (jwtService.validateToken(jwt, userDetails.getUsername())) {
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
@@ -52,10 +68,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     );
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
+                    log.debug("Authenticated user: {}, URI: {}", username, request.getRequestURI());
+                } else {
+                    log.warn("Invalid JWT token for user: {}", username);
                 }
+            } catch (Exception e) {
+                log.warn("JWT authentication failed for user '{}': {}", username, e.getMessage());
             }
-        } catch (Exception e) {
-            // Token parsing failed: expired, invalid, etc. Proceed unauthenticated.
         }
 
         filterChain.doFilter(request, response);

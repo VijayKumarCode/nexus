@@ -1,6 +1,6 @@
 package com.vk.gaming.nexus.repository;
 
-import com.vk.gaming.nexus.model.GameMoveEntity;
+import com.vk.gaming.nexus.entity.GameMoveEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.stereotype.Repository;

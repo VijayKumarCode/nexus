@@ -1,12 +1,15 @@
 package com.vk.gaming.nexus.service;
 
 import com.vk.gaming.nexus.dto.AuthRequest;
+import com.vk.gaming.nexus.dto.LeaderboardEntryDto;
 import com.vk.gaming.nexus.entity.User;
-import com.vk.gaming.nexus.exception.EmailAlreadyRegisteredException;
-import com.vk.gaming.nexus.exception.UsernameTakenException;
+import com.vk.gaming.nexus.enums.UserStatus;
+import com.vk.gaming.nexus.exceptions.EmailAlreadyRegisteredException;
+import com.vk.gaming.nexus.exceptions.UsernameTakenException;
 import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -23,6 +27,12 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
+
+    @Value("${presence.idle-threshold-ms:120000}")
+    private long idleThresholdMs;
+
+    @Value("${presence.check-rate-ms:10000}")
+    private long presenceCheckRateMs;
 
     @Transactional
     public User registerUser(AuthRequest request) {
@@ -39,7 +49,7 @@ public class UserService {
         user.setEmail(request.getEmail());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEnabled(false);
-        user.setStatus(User.UserStatus.OFFLINE);
+        user.setStatus(UserStatus.OFFLINE);
         user.setWins(0);
         user.setLosses(0);
 
@@ -52,10 +62,22 @@ public class UserService {
     }
 
     @Transactional
+    public boolean activateAccount(String token) {
+        return userRepository.findByActivationToken(token)
+                .map(user -> {
+                    user.setEnabled(true);
+                    user.setActivationToken(null);
+                    userRepository.save(user);
+                    log.info("Account activated for user: {}", user.getUsername());
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    @Transactional
     public User loginUser(AuthRequest request) {
         User user = userRepository.findByUsername(request.getUsername()).orElse(null);
 
-        // Constant-time comparison prevents user-enumeration timing attacks
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new RuntimeException("Invalid username or password.");
         }
@@ -63,7 +85,7 @@ public class UserService {
             throw new RuntimeException("Account not activated. Check your email.");
         }
 
-        user.setStatus(User.UserStatus.ONLINE);
+        user.setStatus(UserStatus.ONLINE);
         user.setLastSeen(System.currentTimeMillis());
         return userRepository.save(user);
     }
@@ -71,56 +93,41 @@ public class UserService {
     @Transactional
     public void logoutUser(String username) {
         userRepository.findByUsername(username).ifPresent(user -> {
-            user.setStatus(User.UserStatus.OFFLINE);
+            user.setStatus(UserStatus.OFFLINE);
             userRepository.save(user);
+            log.info("User logged out: {}", username);
         });
     }
 
-    /*
-     * BUG FIX — CRITICAL: Original syncUserPresence always set status = ONLINE
-     * even while the player was IN_GAME. This silently corrupted game status
-     * every 10 seconds from the heartbeat, making IN_GAME players appear online
-     * in the lobby and challengeable while in a game.
-     *
-     * Fix: preserve IN_GAME status — only update to ONLINE if not currently in game.
-     */
     @Transactional
     public void syncUserPresence(String username) {
         userRepository.findByUsername(username).ifPresent(u -> {
-            if (u.getStatus() != User.UserStatus.IN_GAME) {
-                u.setStatus(User.UserStatus.ONLINE);
+            if (u.getStatus() != UserStatus.IN_GAME) {
+                u.setStatus(UserStatus.ONLINE);
             }
             u.setLastSeen(System.currentTimeMillis());
             userRepository.save(u);
         });
     }
 
-    /*
-     * BUG FIX: heartbeat now passes enum parameters to match the fixed
-     * UserRepository.updateHeartbeat signature.
-     */
     @Transactional
     public void heartbeat(String username) {
         int updated = userRepository.updateHeartbeat(
                 username,
                 System.currentTimeMillis(),
-                User.UserStatus.IN_GAME,
-                User.UserStatus.ONLINE
+                UserStatus.IN_GAME,
+                UserStatus.ONLINE
         );
         if (updated == 0) {
             log.warn("Heartbeat: user not found — {}", username);
         }
     }
 
-    /*
-     * BUG FIX: markInactiveUsersOffline now receives the OFFLINE enum
-     * parameter instead of relying on the broken $UserStatus JPQL reference.
-     */
-    @Scheduled(fixedRate = 10_000)
+    @Scheduled(fixedDelayString = "${presence.check-rate-ms:10000}")
     @Transactional
     public void updateIdleUsers() {
-        long cutoff  = System.currentTimeMillis() - 120_000;   // 2 min idle threshold
-        int updated  = userRepository.markInactiveUsersOffline(cutoff, User.UserStatus.OFFLINE);
+        long cutoff = System.currentTimeMillis() - idleThresholdMs;
+        int updated = userRepository.markInactiveUsersOffline(cutoff, UserStatus.OFFLINE);
         if (updated > 0) {
             log.info("Marked {} user(s) OFFLINE due to inactivity", updated);
         }
@@ -137,7 +144,28 @@ public class UserService {
     }
 
     public List<User> getOnlineUsers() {
-        return userRepository.findByStatus(User.UserStatus.ONLINE);
+        return userRepository.findByStatus(UserStatus.ONLINE);
+    }
+
+    public List<LeaderboardEntryDto> getTopPlayers(int limit) {
+        List<User> users = userRepository.findTop10ActivePlayers();
+        return users.stream()
+                .limit(limit)
+                .map(u -> new LeaderboardEntryDto(
+                        u.getUsername(),
+                        u.getFullName(),
+                        u.getStatus(),
+                        u.getWins(),
+                        u.getLosses(),
+                        u.getWins() + u.getLosses(),
+                        calculateWinRate(u.getWins(), u.getLosses())
+                ))
+                .collect(Collectors.toList());
+    }
+
+    private double calculateWinRate(int wins, int losses) {
+        int total = wins + losses;
+        return total == 0 ? 0.0 : Math.round((double) wins / total * 10000.0) / 100.0;
     }
 
     public boolean isUsernameAvailable(String username) {
@@ -146,6 +174,7 @@ public class UserService {
                 && !userRepository.existsByUsername(username.trim());
     }
 
+    @Transactional
     public void resendActivationLink(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found"));
@@ -156,5 +185,15 @@ public class UserService {
         user.setActivationToken(token);
         userRepository.save(user);
         otpService.sendActivationLink(email, token);
+    }
+
+    public boolean isDatabaseHealthy() {
+        try {
+            userRepository.count();
+            return true;
+        } catch (Exception e) {
+            log.error("Database health check failed: {}", e.getMessage());
+            return false;
+        }
     }
 }

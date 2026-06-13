@@ -1,9 +1,10 @@
 package com.vk.gaming.nexus.config;
 
-import com.vk.gaming.nexus.service.ChallengeService;
-import com.vk.gaming.nexus.service.UserService;
-import com.vk.gaming.nexus.service.GameService;
 import com.vk.gaming.nexus.dto.PlayerStatus;
+import com.vk.gaming.nexus.enums.UserStatus;
+import com.vk.gaming.nexus.service.ChallengeService;
+import com.vk.gaming.nexus.service.GameService;
+import com.vk.gaming.nexus.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -64,16 +65,9 @@ public class WebSocketEventListener {
             userService.logoutUser(username);
             challengeService.cancelStaleChallenges(username);
             gameService.handlePlayerDisconnect(username);
-            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, "OFFLINE"));
+            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, UserStatus.OFFLINE));
         } catch (Exception e) {
             log.warn("Error during disconnect cleanup for {}: {}", username, e.getMessage());
         }
-    }
-
-    private String extractHeader(StompHeaderAccessor accessor, String headerName) {
-        var nativeHeaders = accessor.toNativeHeaderMap();
-        if (nativeHeaders == null) return null;
-        var values = nativeHeaders.get(headerName);
-        return (values != null && !values.isEmpty()) ? values.get(0) : null;
     }
 }

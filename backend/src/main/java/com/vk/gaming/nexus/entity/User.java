@@ -35,9 +35,9 @@ public class User {
     private boolean enabled = false;
 
     @JsonIgnore
-    @Column(unique = true)
+    @Column(name = "activationtoken", unique = true)
     private String activationToken;
-
+    
     @Column(name = "last_seen")
     @JsonIgnore
     private Long lastSeen;

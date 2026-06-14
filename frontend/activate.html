@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activate Account - Nexus Arena</title>
+    <link rel="stylesheet" href="activate.css">
+</head>
+<body>
+<div class="container">
+    <div class="logo">
+        <h1>NEXUS ARENA</h1>
+    </div>
+
+    <div id="loading-state" class="state">
+        <div class="spinner"></div>
+        <p>Activating your account...</p>
+    </div>
+
+    <div id="success-state" class="state hidden">
+        <div class="icon success-icon">✓</div>
+        <h2>Account Activated!</h2>
+        <p>Your account is now active. You can now log in and join the arena.</p>
+        <button onclick="redirectToLogin()" class="btn-primary">Go to Login</button>
+    </div>
+
+    <div id="error-state" class="state hidden">
+        <div class="icon error-icon">✕</div>
+        <h2>Activation Failed</h2>
+        <p id="error-message">The activation link is invalid or has expired.</p>
+        <button onclick="requestNewLink()" class="btn-secondary">Request New Link</button>
+    </div>
+
+    <div id="expired-state" class="state hidden">
+        <div class="icon expired-icon">!</div>
+        <h2>Link Expired</h2>
+        <p>This activation link has expired for security reasons.</p>
+        <button onclick="requestNewLink()" class="btn-secondary">Request New Link</button>
+    </div>
+</div>
+
+<script src="config.js"></script>
+<script src="activate.js"></script>
+</body>
+</html>

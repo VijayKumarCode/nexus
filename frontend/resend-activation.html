@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resend Activation - Nexus Arena</title>
+    <link rel="stylesheet" href="activate.css">
+</head>
+<body>
+<div class="container">
+    <div class="logo">
+        <h1>NEXUS ARENA</h1>
+    </div>
+
+    <div id="form-state" class="state active">
+        <div class="icon info-icon">✉</div>
+        <h2>Resend Activation Link</h2>
+        <p>Enter your email address and we will send you a new activation link.</p>
+
+        <form id="resend-form" novalidate>
+            <div class="form-group">
+                <input
+                        type="email"
+                        id="email"
+                        name="email"
+                        placeholder="your@email.com"
+                        required
+                        autocomplete="email"
+                        aria-label="Email address"
+                >
+                <span id="email-error" class="field-error" role="alert"></span>
+            </div>
+
+            <button type="submit" id="submit-btn" class="btn-primary">
+                <span class="btn-text">Send Activation Link</span>
+                <span class="btn-spinner hidden"></span>
+            </button>
+        </form>
+
+        <p class="form-footer">
+            <a href="/login">Back to Login</a>
+        </p>
+    </div>
+
+    <div id="loading-state" class="state">
+        <div class="spinner"></div>
+        <p>Sending activation link...</p>
+    </div>
+
+    <div id="success-state" class="state">
+        <div class="icon success-icon">✓</div>
+        <h2>Link Sent!</h2>
+        <p>If an account exists with that email, you will receive a new activation link shortly.</p>
+        <p class="sub-text">Did not receive it? Check your spam folder or wait 60 seconds to request another.</p>
+        <button onclick="resetForm()" class="btn-secondary" id="resend-btn" disabled>
+            Resend (<span id="countdown">60</span>s)
+        </button>
+        <p class="form-footer">
+            <a href="/login">Back to Login</a>
+        </p>
+    </div>
+
+    <div id="error-state" class="state">
+        <div class="icon error-icon">✕</div>
+        <h2>Request Failed</h2>
+        <p id="error-message">Something went wrong. Please try again later.</p>
+        <button onclick="resetForm()" class="btn-secondary">Try Again</button>
+        <p class="form-footer">
+            <a href="/login">Back to Login</a>
+        </p>
+    </div>
+</div>
+
+<script src="/js/config.js"></script>
+<script src="/js/resend-activation.js"></script>
+</body>
+</html>

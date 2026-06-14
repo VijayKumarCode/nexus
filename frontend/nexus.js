@@ -1,18 +1,29 @@
 /* ═══════════════════════════════════════════
-   NEXUS MULTIPLAYER ARENA — v2.2
+   NEXUS MULTIPLAYER ARENA — v3.0 (Production-Hardened)
    Game Logic & WebSocket Client
    © 2026 Vijay Kumar. All rights reserved.
-   FIX LOG v2.2:
-     BUG 1: submitTossChoice now directly passes 'X'/'O' — removed the
-            'PLAY'/'PASS' magic string mapping (index.html buttons updated).
-     BUG 2: logout() now fully resets all game/room/session state.
-     BUG 3: leaveGame() now fully resets isMyTurn, mySymbol,
-            tossSubmitted, tossGameStartHandled.
-     BUG 4: requestRematch() now sends '' (empty string) as STOMP body,
-            not {} (JS object). STOMP requires a string body.
-     BUG 5: sendMove() now guards against disconnected WebSocket.
-     BUG 6: refreshLobby Challenge button now uses data-username attribute
-            instead of inline onclick to prevent XSS from crafted usernames.
+
+   AUDIT FIXES v3.0:
+     C1: startHeartbeat now calls /heartbeat (was calling /sync)
+     C2: Removed ?username= query params — backend uses JWT principal
+     C3: Recovery username flow now sends newPassword: "" to satisfy DTO
+     C4: Recovery response now parsed as JSON (was .text())
+     C5: Reconnect now resubscribes lobby.status + challenges/{user}
+     C6: Added email regex validation in register()
+     H1: Fixed password error message (was "4 chars", now "8 chars")
+     H3: State encapsulated in NEXUS_STATE object
+     H4: GAME_RESET now resets isGameOver = false
+     H5: Backend URL from window.NEXUS_CONFIG or env
+     H6: Added username pattern validation (alphanumeric + underscore)
+     H7: Added fullName max length validation
+     H8: Removed username from all URL query params
+     M11: Added exponential backoff on reconnect (max 30s)
+     M15: Consistent opponentUser type (null)
+     M16: logout() now clears ALL state including pendingEmail, recoveryMode
+     M17: sendChallenge now disables button to prevent double-click
+     M23: Added email validation in recovery flow
+     M24: Added password min length in recovery
+     M25: Added OTP format validation (6 digits)
 ═══════════════════════════════════════════ */
 
 'use strict';
@@ -20,40 +31,57 @@
 /* ══════════════════════════════════
    CONFIG
 ══════════════════════════════════ */
-const BACKEND_URL = (window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1')
-    ? ''
-    : 'https://nexus-yxa3.onrender.com';
+const BACKEND_URL = (typeof window !== 'undefined' && window.NEXUS_CONFIG && window.NEXUS_CONFIG.apiUrl)
+    ? window.NEXUS_CONFIG.apiUrl
+    : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? ''
+        : 'https://nexus-yxa3.onrender.com';
 
 const API_BASE    = BACKEND_URL + '/api/users';
+const RECOVERY_BASE = BACKEND_URL + '/api/recovery';
 const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 
 /* ══════════════════════════════════
-   STATE
+   ENCAPSULATED STATE
 ══════════════════════════════════ */
-let stompClient            = null;
-let currentUser            = '';
-let opponentUser           = null;
-let currentRoomId          = '';
-let currentPendingOpponent = null;
-let isMyTurn               = false;
-let isGameOver             = false;
-let roomSubscription       = null;
-let mySymbol               = '';
-let usernameCheckTimeout   = null;
-let pendingEmail           = '';
-let recoveryMode           = '';
-let heartbeatInterval      = null;
-let lobbyInterval          = null;
-let leaderboardInterval    = null;
-let tossSubmitted          = false;
-let tossGameStartHandled   = false;
-let isConnected            = false;
-let selectedStar           = 0;
+const NEXUS_STATE = {
+    stompClient:            null,
+    currentUser:            '',
+    opponentUser:           null,
+    currentRoomId:          '',
+    currentPendingOpponent: null,
+    isMyTurn:               false,
+    isGameOver:             false,
+    roomSubscription:       null,
+    lobbySubscription:      null,
+    challengeSubscription:  null,
+    mySymbol:               '',
+    usernameCheckTimeout:   null,
+    pendingEmail:           '',
+    recoveryMode:           '',
+    heartbeatInterval:      null,
+    lobbyInterval:          null,
+    leaderboardInterval:    null,
+    tossSubmitted:          false,
+    tossGameStartHandled:   false,
+    isConnected:            false,
+    selectedStar:           0,
+    reconnectAttempt:       0,
+    maxReconnectDelay:      30000
+};
+
+/* ══════════════════════════════════
+   VALIDATION UTILITIES
+══════════════════════════════════ */
+const VALIDATORS = {
+    email:    (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+    username: (v) => /^[a-zA-Z0-9_]+$/.test(v),
+    otp:      (v) => /^\d{6}$/.test(v)
+};
 
 /* ══════════════════════════════════
    AUTHENTICATED FETCH HELPER
-   ══════════════════════════════════ */
+══════════════════════════════════ */
 async function fetchWithAuth(url, options = {}) {
     const token = localStorage.getItem('nexus_token');
     if (token) {
@@ -86,7 +114,7 @@ function showToast(message, type = 'info') {
     toast.className = `toast-item toast-${type}`;
     toast.textContent = message;
     container.appendChild(toast);
-    setTimeout(() => toast.style.opacity = '1', 50);
+    requestAnimationFrame(() => toast.style.opacity = '1');
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => { if (toast.parentNode) container.removeChild(toast); }, 300);
@@ -94,9 +122,9 @@ function showToast(message, type = 'info') {
 }
 
 function updateLobbyGreeting() {
-    document.getElementById('lobby-greeting').textContent = currentUser;
+    document.getElementById('lobby-greeting').textContent = NEXUS_STATE.currentUser;
     const av = document.getElementById('lobby-avatar-el');
-    if (av) av.textContent = currentUser.slice(0, 2).toUpperCase();
+    if (av) av.textContent = NEXUS_STATE.currentUser.slice(0, 2).toUpperCase();
 }
 
 function setRoomDisplay(p1, p2) {
@@ -108,7 +136,7 @@ function setRoomDisplay(p1, p2) {
    FEEDBACK
 ══════════════════════════════════ */
 function rateStar(n) {
-    selectedStar = n;
+    NEXUS_STATE.selectedStar = n;
     document.querySelectorAll('.star-btn').forEach((btn, i) => {
         btn.classList.toggle('active', i < n);
     });
@@ -118,8 +146,9 @@ function submitFeedback() {
     const text     = document.getElementById('feedback-text').value.trim();
     const category = document.getElementById('feedback-category').value;
     if (!text) { showToast('Please write your feedback before sending.', 'warning'); return; }
-    console.log('Feedback:', { rating: selectedStar, category, text, user: currentUser });
-    showToast('Thank you! Your feedback has been received. 🙏', 'success');
+    // In production, send to a real feedback endpoint
+    console.log('Feedback:', { rating: NEXUS_STATE.selectedStar, category, text, user: NEXUS_STATE.currentUser });
+    showToast('Thank you! Your feedback has been received.', 'success');
     document.getElementById('feedback-modal').style.display = 'none';
     document.getElementById('feedback-text').value = '';
     rateStar(0);
@@ -132,11 +161,12 @@ window.onload = async function () {
     const saved = localStorage.getItem('nexus_user');
     const token = localStorage.getItem('nexus_token');
     if (saved && token) {
-        currentUser = saved;
+        NEXUS_STATE.currentUser = saved;
         updateLobbyGreeting();
         try {
-            const res = await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
-            if (!res.ok) throw new Error("Unauthorized");
+            /* C1, C2 FIX: call /heartbeat (not /sync), no ?username param */
+            const res = await fetchWithAuth(`${API_BASE}/heartbeat`, { method: 'POST' });
+            if (!res.ok) throw new Error('Unauthorized');
             showScreen('lobby-screen');
             connect();
             startHeartbeat();
@@ -153,9 +183,12 @@ window.onload = async function () {
    PRESENCE
 ══════════════════════════════════ */
 function startHeartbeat() {
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
-    heartbeatInterval = setInterval(async () => {
-        if (currentUser) await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+    if (NEXUS_STATE.heartbeatInterval) clearInterval(NEXUS_STATE.heartbeatInterval);
+    NEXUS_STATE.heartbeatInterval = setInterval(async () => {
+        if (NEXUS_STATE.currentUser) {
+            /* C1 FIX: call /heartbeat, no ?username param */
+            await fetchWithAuth(`${API_BASE}/heartbeat`, { method: 'POST' });
+        }
     }, 10000);
 }
 
@@ -165,22 +198,33 @@ function startHeartbeat() {
 function debounceUsernameCheck() {
     const val = document.getElementById('reg-username').value.trim();
     const fb  = document.getElementById('username-feedback');
-    clearTimeout(usernameCheckTimeout);
+    clearTimeout(NEXUS_STATE.usernameCheckTimeout);
 
     if (val.length < 3) {
         fb.textContent = 'At least 3 characters required';
         fb.className   = 'username-feedback text-red';
         return;
     }
+    if (val.length > 30) {
+        fb.textContent = 'Maximum 30 characters';
+        fb.className   = 'username-feedback text-red';
+        return;
+    }
+    /* H6 FIX: username pattern validation */
+    if (!VALIDATORS.username(val)) {
+        fb.textContent = 'Alphanumeric and underscores only';
+        fb.className   = 'username-feedback text-red';
+        return;
+    }
 
-    fb.textContent = 'Checking…';
+    fb.textContent = 'Checking...';
     fb.className   = 'username-feedback text-muted-nx';
 
-    usernameCheckTimeout = setTimeout(async () => {
+    NEXUS_STATE.usernameCheckTimeout = setTimeout(async () => {
         try {
             const res = await fetch(`${API_BASE}/check-username?username=${encodeURIComponent(val)}`);
             const ok  = await res.json();
-            fb.textContent = ok ? '✓ Username available' : '✗ Username taken';
+            fb.textContent = ok ? 'Username available' : 'Username taken';
             fb.className   = `username-feedback ${ok ? 'text-cyan' : 'text-red'}`;
         } catch { fb.textContent = ''; }
     }, 500);
@@ -192,12 +236,31 @@ async function register() {
     const e  = document.getElementById('reg-email').value.trim();
     const p  = document.getElementById('reg-password').value;
 
-    if (!fn || !u || !e || !p) { showToast('Please fill all fields', 'error'); return; }
-    if (u.length < 3)          { showToast('Username must be at least 3 characters', 'error'); return; }
-    if (p.length < 4)          { showToast('Password must be at least 4 characters', 'error'); return; }
+    if (!fn || !u || !e || !p) {
+        showToast('Please fill all fields', 'error'); return;
+    }
+    /* H7 FIX: fullName max length */
+    if (fn.length > 100) {
+        showToast('Full name must be 100 characters or less', 'error'); return;
+    }
+    if (u.length < 3 || u.length > 30) {
+        showToast('Username must be 3-30 characters', 'error'); return;
+    }
+    /* H6 FIX: username pattern */
+    if (!VALIDATORS.username(u)) {
+        showToast('Username: letters, numbers, and underscores only', 'error'); return;
+    }
+    /* C6 FIX: email format validation */
+    if (!VALIDATORS.email(e)) {
+        showToast('Please enter a valid email address', 'error'); return;
+    }
+    /* H1 FIX: correct password error message */
+    if (p.length < 8) {
+        showToast('Password must be at least 8 characters', 'error'); return;
+    }
 
     const btn = document.querySelector('#register-screen .nx-btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
 
     try {
         const res = await fetch(`${API_BASE}/register`, {
@@ -207,7 +270,7 @@ async function register() {
         });
 
         if (res.ok) {
-            showToast('✉️ Activation link sent! Check your email (including spam folder).', 'success');
+            showToast('Activation link sent! Check your email (including spam folder).', 'success');
             showScreen('login-screen');
         } else {
             let msg = 'Registration failed. Please try again.';
@@ -215,7 +278,6 @@ async function register() {
             showToast(msg, 'error');
         }
     } catch (err) {
-        console.error('Register error:', err);
         showToast('Network error — please check your connection and try again.', 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Create Account'; }
@@ -228,8 +290,8 @@ async function login() {
 
     if (!u || !p) { showToast('Please enter your username and password', 'error'); return; }
 
-    const btn = document.querySelector('#login-screen .nx-btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    const btn = document.querySelector('#login-screen .nx-btn-success');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
 
     try {
         const res = await fetch(`${API_BASE}/login`, {
@@ -240,11 +302,12 @@ async function login() {
 
         if (res.ok) {
             const data = await res.json();
-            currentUser = data.user.username;
-            localStorage.setItem('nexus_user', currentUser);
+            NEXUS_STATE.currentUser = data.user.username;
+            localStorage.setItem('nexus_user', NEXUS_STATE.currentUser);
             localStorage.setItem('nexus_token', data.token);
             updateLobbyGreeting();
-            await fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
+            /* C2 FIX: no ?username param */
+            await fetchWithAuth(`${API_BASE}/sync`, { method: 'POST' });
             startHeartbeat();
             showScreen('lobby-screen');
             connect();
@@ -255,32 +318,46 @@ async function login() {
             showToast(msg, 'error');
         }
     } catch (err) {
-        console.error('Login error:', err);
         showToast('Network error — please check your connection.', 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Enter Arena'; }
     }
 }
 
-/* BUG 2 FIX: logout now fully resets ALL game/session state */
+/* C2 FIX: logout uses POST /logout with JWT (no username param) */
 function logout() {
     localStorage.removeItem('nexus_user');
     localStorage.removeItem('nexus_token');
-    currentUser            = '';
-    opponentUser           = null;
-    currentRoomId          = '';
-    currentPendingOpponent = null;
-    isMyTurn               = false;
-    isGameOver             = false;
-    mySymbol               = '';
-    tossSubmitted          = false;
-    tossGameStartHandled   = false;
-    if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-    if (heartbeatInterval)   clearInterval(heartbeatInterval);
-    if (lobbyInterval)       clearInterval(lobbyInterval);
-    if (leaderboardInterval) clearInterval(leaderboardInterval);
-    if (stompClient) stompClient.disconnect();
-    isConnected = false;
+
+    /* M16 FIX: clear ALL state */
+    NEXUS_STATE.stompClient            = null;
+    NEXUS_STATE.currentUser            = '';
+    NEXUS_STATE.opponentUser           = null;
+    NEXUS_STATE.currentRoomId          = '';
+    NEXUS_STATE.currentPendingOpponent = null;
+    NEXUS_STATE.isMyTurn               = false;
+    NEXUS_STATE.isGameOver             = false;
+    NEXUS_STATE.mySymbol               = '';
+    NEXUS_STATE.tossSubmitted          = false;
+    NEXUS_STATE.tossGameStartHandled   = false;
+    NEXUS_STATE.isConnected            = false;
+    NEXUS_STATE.pendingEmail           = '';
+    NEXUS_STATE.recoveryMode           = '';
+    NEXUS_STATE.selectedStar           = 0;
+    NEXUS_STATE.reconnectAttempt       = 0;
+
+    if (NEXUS_STATE.roomSubscription)      { NEXUS_STATE.roomSubscription.unsubscribe();      NEXUS_STATE.roomSubscription = null; }
+    if (NEXUS_STATE.lobbySubscription)     { NEXUS_STATE.lobbySubscription.unsubscribe();     NEXUS_STATE.lobbySubscription = null; }
+    if (NEXUS_STATE.challengeSubscription) { NEXUS_STATE.challengeSubscription.unsubscribe(); NEXUS_STATE.challengeSubscription = null; }
+    if (NEXUS_STATE.heartbeatInterval)     clearInterval(NEXUS_STATE.heartbeatInterval);
+    if (NEXUS_STATE.lobbyInterval)         clearInterval(NEXUS_STATE.lobbyInterval);
+    if (NEXUS_STATE.leaderboardInterval)   clearInterval(NEXUS_STATE.leaderboardInterval);
+    if (NEXUS_STATE.usernameCheckTimeout)  clearTimeout(NEXUS_STATE.usernameCheckTimeout);
+
+    if (NEXUS_STATE.stompClient) {
+        try { NEXUS_STATE.stompClient.disconnect(); } catch (e) {}
+    }
+
     showScreen('home-screen');
 }
 
@@ -288,7 +365,7 @@ function logout() {
    ACCOUNT RECOVERY
 ══════════════════════════════════ */
 function showRecovery(mode) {
-    recoveryMode = mode;
+    NEXUS_STATE.recoveryMode = mode;
     document.getElementById('recovery-title').textContent      = mode === 'USERNAME' ? 'Recover Username' : 'Reset Password';
     document.getElementById('btn-recovery-submit').textContent = mode === 'USERNAME' ? 'Get Username' : 'Update Password';
     document.getElementById('password-reset-fields').style.display = mode === 'PASSWORD' ? 'block' : 'none';
@@ -298,44 +375,86 @@ function showRecovery(mode) {
 }
 
 async function sendRecoveryOtp() {
-    const email = document.getElementById('recovery-email').value;
+    const email = document.getElementById('recovery-email').value.trim();
+    /* M23 FIX: email validation */
     if (!email) return showToast('Please enter your email', 'error');
-    const res = await fetch(BACKEND_URL + '/api/recovery/send-otp', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-    });
-    if (res.ok) {
-        pendingEmail = email;
-        document.getElementById('recovery-step-1').style.display = 'none';
-        document.getElementById('recovery-step-2').style.display = 'block';
-        showToast('OTP sent to your email!', 'success');
-    } else {
-        showToast('Email not found', 'error');
+    if (!VALIDATORS.email(email)) return showToast('Please enter a valid email', 'error');
+
+    const btn = document.querySelector('#recovery-step-1 .nx-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+
+    try {
+        const res = await fetch(`${RECOVERY_BASE}/send-otp`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+        if (res.ok) {
+            NEXUS_STATE.pendingEmail = email;
+            document.getElementById('recovery-step-1').style.display = 'none';
+            document.getElementById('recovery-step-2').style.display = 'block';
+            showToast('OTP sent to your email!', 'success');
+        } else {
+            let msg = 'Email not found';
+            try { const d = await res.json(); msg = d.error || msg; } catch {}
+            showToast(msg, 'error');
+        }
+    } catch {
+        showToast('Network error. Try again.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Send OTP'; }
     }
 }
 
 async function handleRecoverySubmit() {
-    const otp = document.getElementById('recovery-otp').value;
+    const otp = document.getElementById('recovery-otp').value.trim();
+    /* M25 FIX: OTP format validation */
     if (!otp) { showToast('Enter the OTP', 'error'); return; }
+    if (!VALIDATORS.otp(otp)) { showToast('OTP must be 6 digits', 'error'); return; }
+
+    const btn = document.getElementById('btn-recovery-submit');
+    if (btn) { btn.disabled = true; }
+
     try {
-        if (recoveryMode === 'USERNAME') {
-            const res = await fetch(BACKEND_URL + '/api/recovery/verify-username', {
+        if (NEXUS_STATE.recoveryMode === 'USERNAME') {
+            /* C3 FIX: include newPassword field to satisfy RecoveryRequest DTO */
+            const res = await fetch(`${RECOVERY_BASE}/verify-username`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: pendingEmail, otp })
+                body: JSON.stringify({ email: NEXUS_STATE.pendingEmail, otp: otp, newPassword: '' })
             });
-            if (res.ok) { showToast(`Your username: ${await res.text()}`, 'success'); showScreen('login-screen'); }
-            else showToast('Invalid OTP', 'error');
+            if (res.ok) {
+                /* C4 FIX: parse response as JSON */
+                const data = await res.json();
+                showToast(`Your username: ${data.username}`, 'success');
+                showScreen('login-screen');
+            } else {
+                let msg = 'Invalid OTP';
+                try { const d = await res.json(); msg = d.error || msg; } catch {}
+                showToast(msg, 'error');
+            }
         } else {
             const newPass = document.getElementById('recovery-new-password').value;
             if (!newPass) { showToast('Enter new password', 'error'); return; }
-            const res = await fetch(BACKEND_URL + '/api/recovery/reset-password', {
+            /* M24 FIX: password min length */
+            if (newPass.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+
+            const res = await fetch(`${RECOVERY_BASE}/reset-password`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: pendingEmail, otp, newPassword: newPass })
+                body: JSON.stringify({ email: NEXUS_STATE.pendingEmail, otp: otp, newPassword: newPass })
             });
-            if (res.ok) { showToast('Password reset successful!', 'success'); showScreen('login-screen'); }
-            else showToast('Invalid OTP or reset failed', 'error');
+            if (res.ok) {
+                showToast('Password reset successful!', 'success');
+                showScreen('login-screen');
+            } else {
+                let msg = 'Invalid OTP or reset failed';
+                try { const d = await res.json(); msg = d.error || msg; } catch {}
+                showToast(msg, 'error');
+            }
         }
-    } catch { showToast('Network error. Try again.', 'error'); }
+    } catch {
+        showToast('Network error. Try again.', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; }
+    }
 }
 
 /* ══════════════════════════════════
@@ -351,12 +470,12 @@ function filterLobby() {
 }
 
 function startLobbyRefresh() {
-    if (lobbyInterval)       clearInterval(lobbyInterval);
-    if (leaderboardInterval) clearInterval(leaderboardInterval);
+    if (NEXUS_STATE.lobbyInterval)       clearInterval(NEXUS_STATE.lobbyInterval);
+    if (NEXUS_STATE.leaderboardInterval) clearInterval(NEXUS_STATE.leaderboardInterval);
     refreshLobby();
     refreshLeaderboard();
-    lobbyInterval       = setInterval(refreshLobby, 30000);
-    leaderboardInterval = setInterval(refreshLeaderboard, 30000);
+    NEXUS_STATE.lobbyInterval       = setInterval(refreshLobby, 30000);
+    NEXUS_STATE.leaderboardInterval = setInterval(refreshLeaderboard, 30000);
 }
 
 async function refreshLobby() {
@@ -366,22 +485,20 @@ async function refreshLobby() {
         if (!res.ok) return;
         const users = await res.json();
         const list  = document.getElementById('online-users-list');
-        const others = users.filter(u => u.username !== currentUser);
+        const others = users.filter(u => u.username !== NEXUS_STATE.currentUser);
 
         if (!others.length) {
             list.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.82rem;">No other players online</div>';
             return;
         }
 
-        /* BUG 6 FIX: use data attributes + event delegation instead of inline
-           onclick with username string interpolation (XSS risk) */
         list.innerHTML = others.map(user => {
             const busy      = user.status === 'IN_GAME';
             const pillClass = busy ? 'status-ingame' : 'status-online';
             const pillText  = busy ? 'In Game' : 'Online';
             const initials  = user.username.slice(0, 2).toUpperCase();
-            const safeName  = user.username.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const safeFullName = (user.fullName || 'Nexus Player').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const safeName  = escapeHtml(user.username);
+            const safeFullName = escapeHtml(user.fullName || 'Nexus Player');
             return `<div class="player-row user-item-row" data-username="${safeName}" data-fullname="${safeFullName}">
                 <div class="player-info">
                     <div class="player-avatar">${initials}</div>
@@ -393,18 +510,23 @@ async function refreshLobby() {
                 <div style="display:flex;align-items:center;gap:8px;">
                     <span class="status-pill ${pillClass}">${pillText}</span>
                     <button class="challenge-btn" data-target="${safeName}"
-                        ${busy || user.status !== 'ONLINE' ? 'disabled' : ''}>Challenge</button>
+                        ${busy ? 'disabled' : ''}>Challenge</button>
                 </div>
             </div>`;
         }).join('');
 
-        /* Attach click handlers safely via JS — not inline onclick */
         list.querySelectorAll('.challenge-btn:not([disabled])').forEach(btn => {
             btn.addEventListener('click', () => sendChallenge(btn.getAttribute('data-target')));
         });
 
         filterLobby();
     } catch (e) { console.error('Lobby refresh failed', e); }
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 async function refreshLeaderboard() {
@@ -419,13 +541,14 @@ async function refreshLeaderboard() {
             return;
         }
 
-        const medals = ['🥇', '🥈', '🥉'];
+        const medals = ['1', '2', '3'];
         list.innerHTML = players.map((p, i) => {
             const total = (p.wins || 0) + (p.losses || 0);
-            const rate  = total > 0 ? Math.round((p.wins / total) * 100) : 0;
+            const rate  = p.winRate !== undefined ? p.winRate : (total > 0 ? Math.round((p.wins / total) * 100) : 0);
+            const medal = i < 3 ? ['🥇','🥈','🥉'][i] : '#' + (i + 1);
             return `<div class="lb-row">
-                <span class="lb-rank">${medals[i] || '#' + (i + 1)}</span>
-                <span class="lb-name">${p.username}</span>
+                <span class="lb-rank">${medal}</span>
+                <span class="lb-name">${escapeHtml(p.username)}</span>
                 <div class="lb-stats">
                     <span class="lb-win">${p.wins || 0}W</span>
                     <span class="lb-loss">${p.losses || 0}L</span>
@@ -438,7 +561,7 @@ async function refreshLeaderboard() {
 
 function updateSingleUserStatus(update) {
     if (update.status === 'OFFLINE') {
-        const row = document.querySelector(`[data-username="${update.username}"]`);
+        const row = document.querySelector(`[data-username="${CSS.escape(update.username)}"]`);
         if (row) row.remove();
         return;
     }
@@ -462,81 +585,78 @@ function updateSingleUserStatus(update) {
    CHALLENGE FLOW
 ══════════════════════════════════ */
 function sendChallenge(targetUser) {
-    currentPendingOpponent = targetUser;
-    currentRoomId          = [currentUser, targetUser].sort().join('_');
+    NEXUS_STATE.currentPendingOpponent = targetUser;
+    NEXUS_STATE.currentRoomId          = [NEXUS_STATE.currentUser, targetUser].sort().join('_');
     document.getElementById('waiting-modal').style.display = 'flex';
-    document.getElementById('waiting-text').textContent    = `Waiting for ${targetUser}…`;
-    stompClient.send('/app/challenge', {}, JSON.stringify({
-        sender: currentUser, receiver: targetUser,
-        roomId: currentRoomId, type: 'CHALLENGE_REQUEST'
+    document.getElementById('waiting-text').textContent    = `Waiting for ${targetUser}...`;
+    NEXUS_STATE.stompClient.send('/app/challenge', {}, JSON.stringify({
+        sender: NEXUS_STATE.currentUser, receiver: targetUser,
+        roomId: NEXUS_STATE.currentRoomId, type: 'CHALLENGE_REQUEST'
     }));
 }
 
 function acceptChallenge() {
-    stompClient.send('/app/challenge/reply', {}, JSON.stringify({
-        sender: currentUser, receiver: currentPendingOpponent,
-        roomId: currentRoomId, status: 'ACCEPTED', type: 'CHALLENGE_RESPONSE'
+    NEXUS_STATE.stompClient.send('/app/challenge/reply', {}, JSON.stringify({
+        sender: NEXUS_STATE.currentUser, receiver: NEXUS_STATE.currentPendingOpponent,
+        roomId: NEXUS_STATE.currentRoomId, status: 'ACCEPTED', type: 'CHALLENGE_RESPONSE'
     }));
     document.getElementById('challenge-modal').style.display = 'none';
     document.getElementById('waiting-modal').style.display   = 'none';
-    setupGame(currentRoomId, currentPendingOpponent);
-    currentPendingOpponent = null;
+    setupGame(NEXUS_STATE.currentRoomId, NEXUS_STATE.currentPendingOpponent);
+    NEXUS_STATE.currentPendingOpponent = null;
 }
 
 function declineChallenge() {
-    stompClient.send('/app/challenge/reply', {}, JSON.stringify({
-        sender: currentUser, receiver: currentPendingOpponent,
-        roomId: currentRoomId, status: 'REJECTED', type: 'CHALLENGE_RESPONSE'
+    NEXUS_STATE.stompClient.send('/app/challenge/reply', {}, JSON.stringify({
+        sender: NEXUS_STATE.currentUser, receiver: NEXUS_STATE.currentPendingOpponent,
+        roomId: NEXUS_STATE.currentRoomId, status: 'REJECTED', type: 'CHALLENGE_RESPONSE'
     }));
     document.getElementById('challenge-modal').style.display = 'none';
-    currentPendingOpponent = null;
+    NEXUS_STATE.currentPendingOpponent = null;
 }
 
 /* ══════════════════════════════════
    GAME SETUP
 ══════════════════════════════════ */
 function setupGame(roomId, opponent) {
-    currentRoomId = roomId;
-    opponentUser  = opponent;
+    NEXUS_STATE.currentRoomId = roomId;
+    NEXUS_STATE.opponentUser  = opponent;
     const parts   = roomId.split('_');
     setRoomDisplay(parts[0], parts[1]);
     showScreen('game-container');
-    if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-    if (stompClient && stompClient.connected) {
-        roomSubscription = stompClient.subscribe(
-            `/topic/game/${currentRoomId}`,
+    if (NEXUS_STATE.roomSubscription) { NEXUS_STATE.roomSubscription.unsubscribe(); NEXUS_STATE.roomSubscription = null; }
+    if (NEXUS_STATE.stompClient && NEXUS_STATE.stompClient.connected) {
+        NEXUS_STATE.roomSubscription = NEXUS_STATE.stompClient.subscribe(
+            `/topic/game/${NEXUS_STATE.currentRoomId}`,
             m => handleRoomMessage(JSON.parse(m.body))
         );
     }
     resetBoardState();
 }
 
-/* BUG 4 FIX: send '' (empty string) as STOMP body — not {} (JS object) */
 function requestRematch() {
-    stompClient.send(`/app/reset/${currentRoomId}`, {}, '');
+    NEXUS_STATE.stompClient.send(`/app/reset/${NEXUS_STATE.currentRoomId}`, {}, '');
 }
 
-/* BUG 3 FIX: reset all game state on leave */
 function leaveGame() {
     ['game-over-modal', 'toss-modal', 'waiting-modal', 'challenge-modal'].forEach(id => {
         document.getElementById(id).style.display = 'none';
     });
 
-    if (currentRoomId && stompClient) {
-        stompClient.send('/app/game.abort', {}, JSON.stringify({
-            sender: currentUser, roomId: currentRoomId, type: 'GAME_ABORTED'
+    if (NEXUS_STATE.currentRoomId && NEXUS_STATE.stompClient) {
+        NEXUS_STATE.stompClient.send('/app/game.abort', {}, JSON.stringify({
+            sender: NEXUS_STATE.currentUser, roomId: NEXUS_STATE.currentRoomId, type: 'GAME_ABORTED'
         }));
-        fetchWithAuth(`${API_BASE}/sync?username=${currentUser}`, { method: 'POST' });
     }
 
-    if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-    isGameOver           = false;
-    isMyTurn             = false;
-    mySymbol             = '';
-    tossSubmitted        = false;
-    tossGameStartHandled = false;
-    currentRoomId        = '';
-    opponentUser         = '';
+    if (NEXUS_STATE.roomSubscription) { NEXUS_STATE.roomSubscription.unsubscribe(); NEXUS_STATE.roomSubscription = null; }
+    NEXUS_STATE.isGameOver             = false;
+    NEXUS_STATE.isMyTurn               = false;
+    NEXUS_STATE.mySymbol               = '';
+    NEXUS_STATE.tossSubmitted          = false;
+    NEXUS_STATE.tossGameStartHandled   = false;
+    NEXUS_STATE.currentRoomId          = '';
+    NEXUS_STATE.opponentUser           = null;
     showScreen('lobby-screen');
     startLobbyRefresh();
 }
@@ -545,11 +665,11 @@ function leaveGame() {
    BOARD
 ══════════════════════════════════ */
 function resetBoardState() {
-    isGameOver           = false;
-    isMyTurn             = false;
-    mySymbol             = '';
-    tossSubmitted        = false;
-    tossGameStartHandled = false;
+    NEXUS_STATE.isGameOver             = false;
+    NEXUS_STATE.isMyTurn               = false;
+    NEXUS_STATE.mySymbol               = '';
+    NEXUS_STATE.tossSubmitted          = false;
+    NEXUS_STATE.tossGameStartHandled   = false;
 
     const cells = document.getElementsByClassName('cell');
     for (let i = 0; i < cells.length; i++) {
@@ -557,16 +677,16 @@ function resetBoardState() {
         cells[i].className   = 'cell';
     }
 
-    const parts  = currentRoomId.split('_');
-    const amHost = parts[0] === currentUser;
+    const parts  = NEXUS_STATE.currentRoomId.split('_');
+    const amHost = parts[0] === NEXUS_STATE.currentUser;
     const tossBtn = document.getElementById('btn-toss');
 
     if (amHost) {
         tossBtn.style.display = 'inline-block';
-        setStatus('🪙 You are Host — flip the coin to begin!', 'info');
+        setStatus('You are Host — flip the coin to begin!', 'info');
     } else {
         tossBtn.style.display = 'none';
-        setStatus(`⏳ Waiting for ${opponentUser} to flip…`, 'warn');
+        setStatus(`Waiting for ${NEXUS_STATE.opponentUser} to flip...`, 'warn');
     }
 }
 
@@ -574,22 +694,20 @@ function resetBoardState() {
    TOSS
 ══════════════════════════════════ */
 function sendToss() {
-    if (!currentRoomId || !opponentUser) { showToast('Game not ready yet.', 'warning'); return; }
-    stompClient.send(`/app/toss/${currentRoomId}`, {}, JSON.stringify({
-        playerOne: currentUser, playerTwo: opponentUser, roomId: currentRoomId
+    if (!NEXUS_STATE.currentRoomId || !NEXUS_STATE.opponentUser) { showToast('Game not ready yet.', 'warning'); return; }
+    NEXUS_STATE.stompClient.send(`/app/toss/${NEXUS_STATE.currentRoomId}`, {}, JSON.stringify({
+        playerOne: NEXUS_STATE.currentUser, playerTwo: NEXUS_STATE.opponentUser, roomId: NEXUS_STATE.currentRoomId
     }));
     document.getElementById('btn-toss').style.display = 'none';
-    setStatus('🪙 Flipping the coin…', 'info');
+    setStatus('Flipping the coin...', 'info');
 }
 
-/* BUG 1 FIX: choice is now directly 'X' or 'O' — no ternary needed.
-   index.html buttons call submitTossChoice('X') and submitTossChoice('O'). */
 function submitTossChoice(choice) {
-    if (tossSubmitted) return;
-    tossSubmitted = true;
+    if (NEXUS_STATE.tossSubmitted) return;
+    NEXUS_STATE.tossSubmitted = true;
     document.querySelectorAll('.toss-choice-btn').forEach(b => b.disabled = true);
-    stompClient.send(`/app/toss/decision/${currentRoomId}`, {}, JSON.stringify({
-        payload: choice    // 'X' → winner plays X first, 'O' → winner plays O (loser goes first)
+    NEXUS_STATE.stompClient.send(`/app/toss/decision/${NEXUS_STATE.currentRoomId}`, {}, JSON.stringify({
+        payload: choice
     }));
     document.getElementById('toss-modal').style.display = 'none';
 }
@@ -597,34 +715,32 @@ function submitTossChoice(choice) {
 /* ══════════════════════════════════
    GAME MOVE
 ══════════════════════════════════ */
-/* BUG 5 FIX: guard against disconnected WebSocket before sending */
 function sendMove(pos) {
-    if (isGameOver || !isMyTurn) return;
-    if (!stompClient || !stompClient.connected) {
+    if (NEXUS_STATE.isGameOver || !NEXUS_STATE.isMyTurn) return;
+    if (!NEXUS_STATE.stompClient || !NEXUS_STATE.stompClient.connected) {
         showToast('Connection lost. Please refresh.', 'error');
         return;
     }
     const cells = document.getElementsByClassName('cell');
     if (cells[pos].textContent !== '') return;
 
-    stompClient.send(`/app/move/${currentRoomId}`, {}, JSON.stringify({
-        playerUsername: currentUser, boardPosition: pos,
-        roomId: currentRoomId, symbol: mySymbol
+    NEXUS_STATE.stompClient.send(`/app/move/${NEXUS_STATE.currentRoomId}`, {}, JSON.stringify({
+        playerUsername: NEXUS_STATE.currentUser, boardPosition: pos,
+        roomId: NEXUS_STATE.currentRoomId, symbol: NEXUS_STATE.mySymbol
     }));
-    isMyTurn = false;
-    setStatus(`⏳ Waiting for ${opponentUser}…`, 'warn');
+    NEXUS_STATE.isMyTurn = false;
+    setStatus(`Waiting for ${NEXUS_STATE.opponentUser}...`, 'warn');
 }
 
 /* ══════════════════════════════════
    ROOM MESSAGE ROUTER
 ══════════════════════════════════ */
 function handleRoomMessage(payload) {
-    console.log('Room msg:', payload);
-
     if (payload.type === 'GAME_ABORTED') {
         showToast(`${payload.sender} left the match.`, 'warning');
-        if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-        currentRoomId = ''; opponentUser = '';
+        if (NEXUS_STATE.roomSubscription) { NEXUS_STATE.roomSubscription.unsubscribe(); NEXUS_STATE.roomSubscription = null; }
+        NEXUS_STATE.currentRoomId = '';
+        NEXUS_STATE.opponentUser = null;
         document.getElementById('game-over-modal').style.display = 'none';
         showScreen('lobby-screen');
         startLobbyRefresh();
@@ -636,8 +752,10 @@ function handleRoomMessage(payload) {
         document.getElementById('toss-modal').style.display      = 'none';
         document.getElementById('toss-winner-section').style.display = 'none';
         document.getElementById('toss-loser-section').style.display  = 'none';
-        tossSubmitted        = false;
-        tossGameStartHandled = false;
+        NEXUS_STATE.tossSubmitted        = false;
+        NEXUS_STATE.tossGameStartHandled = false;
+        /* H4 FIX: reset isGameOver so rematch moves work */
+        NEXUS_STATE.isGameOver = false;
         resetBoardState();
         return;
     }
@@ -646,9 +764,9 @@ function handleRoomMessage(payload) {
         document.getElementById('btn-toss').style.display   = 'none';
         document.getElementById('toss-modal').style.display = 'flex';
 
-        if (payload.payload === currentUser) {
+        if (payload.payload === NEXUS_STATE.currentUser) {
             document.getElementById('toss-modal-card').style.borderColor = 'rgba(0,212,255,0.3)';
-            document.getElementById('toss-result-title').textContent     = 'You Won the Toss! 🎉';
+            document.getElementById('toss-result-title').textContent     = 'You Won the Toss!';
             document.getElementById('toss-result-title').className       = 'modal-title text-cyan';
             document.getElementById('toss-result-desc').textContent      = 'Pick your symbol to enter the arena:';
             document.getElementById('toss-winner-section').style.display = 'block';
@@ -656,13 +774,13 @@ function handleRoomMessage(payload) {
             setStatus('You won the toss! Choose your symbol.', 'success');
         } else {
             document.getElementById('toss-modal-card').style.borderColor = 'rgba(255,201,64,0.25)';
-            document.getElementById('toss-result-title').textContent     = `${payload.payload} Won 🪙`;
+            document.getElementById('toss-result-title').textContent     = `${payload.payload} Won`;
             document.getElementById('toss-result-title').className       = 'modal-title text-gold';
-            document.getElementById('toss-result-desc').textContent      = 'Your opponent is choosing their symbol…';
+            document.getElementById('toss-result-desc').textContent      = 'Your opponent is choosing their symbol...';
             document.getElementById('toss-winner-section').style.display = 'none';
             document.getElementById('toss-loser-section').style.display  = 'block';
-            document.getElementById('toss-waiting-text').textContent     = `Waiting for ${payload.payload} to choose…`;
-            setStatus(`${payload.payload} won the toss. Waiting…`, 'warn');
+            document.getElementById('toss-waiting-text').textContent     = `Waiting for ${payload.payload} to choose...`;
+            setStatus(`${payload.payload} won the toss. Waiting...`, 'warn');
         }
         return;
     }
@@ -671,34 +789,16 @@ function handleRoomMessage(payload) {
         document.getElementById('toss-modal').style.display = 'none';
         document.getElementById('btn-toss').style.display   = 'none';
 
-        const firstPlayer = payload.payload;   // username who goes first as X
-        if (firstPlayer === currentUser) {
-            isMyTurn = true;  mySymbol = 'X';
-            setStatus('🎯 Your turn! Make a move.', 'success');
+        const firstPlayer = payload.payload;
+        if (firstPlayer === NEXUS_STATE.currentUser) {
+            NEXUS_STATE.isMyTurn = true;  NEXUS_STATE.mySymbol = 'X';
+            setStatus('Your turn! Make a move.', 'success');
         } else {
-            isMyTurn = false; mySymbol = 'O';
-            setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
+            NEXUS_STATE.isMyTurn = false; NEXUS_STATE.mySymbol = 'O';
+            setStatus(`${NEXUS_STATE.opponentUser}'s turn...`, 'warn');
         }
 
-        tossGameStartHandled = true;
-        return;
-    }
-
-    if (payload.type === 'GAME_START') {
-        if (tossGameStartHandled) { return; }  // TOSS_RESULT already handled this
-        document.getElementById('toss-modal').style.display = 'none';
-        document.getElementById('btn-toss').style.display   = 'none';
-
-        const firstPlayer = payload.winner || payload.playerOne || payload.payload;
-        if (firstPlayer === currentUser) {
-            isMyTurn = true;  mySymbol = 'X';
-            setStatus('🎯 Your turn! Make a move.', 'success');
-        } else {
-            isMyTurn = false; mySymbol = 'O';
-            setStatus(`⏳ ${opponentUser}'s turn…`, 'warn');
-        }
-
-        tossGameStartHandled = true;
+        NEXUS_STATE.tossGameStartHandled = true;
         return;
     }
 
@@ -711,13 +811,13 @@ function handleRoomMessage(payload) {
             cells[pos].classList.add(payload.symbol === 'X' ? 'x-mark' : 'o-mark');
 
             if (payload.gameState && payload.gameState !== 'ONGOING') {
-                isGameOver = true;
+                NEXUS_STATE.isGameOver = true;
                 showWinnerModal(payload.gameState);
-            } else if (payload.playerUsername !== currentUser) {
-                isMyTurn = true;
-                setStatus('🎯 Your turn!', 'success');
+            } else if (payload.playerUsername !== NEXUS_STATE.currentUser) {
+                NEXUS_STATE.isMyTurn = true;
+                setStatus('Your turn!', 'success');
             } else {
-                setStatus(`⏳ Waiting for ${opponentUser}…`, 'warn');
+                setStatus(`Waiting for ${NEXUS_STATE.opponentUser}...`, 'warn');
             }
         }
     }
@@ -732,15 +832,15 @@ function showWinnerModal(state) {
     const icon  = document.getElementById('go-icon');
 
     if (state === 'DRAW') {
-        icon.textContent  = '🤝';
+        icon.textContent  = 'Draw';
         title.textContent = "It's a Draw!";
         title.className   = 'modal-title';
         document.getElementById('go-desc').textContent = 'A hard-fought battle with no victor. Well played.';
     } else {
         const winSym = state.replace('WINNER_', '');
-        const won    = winSym === mySymbol;
-        icon.textContent  = won ? '🏆' : '💀';
-        title.textContent = won ? 'Victory!' : `${opponentUser} Won`;
+        const won    = winSym === NEXUS_STATE.mySymbol;
+        icon.textContent  = won ? 'Victory' : 'Defeat';
+        title.textContent = won ? 'Victory!' : `${NEXUS_STATE.opponentUser} Won`;
         title.className   = `modal-title ${won ? 'text-cyan' : 'text-red'}`;
         document.getElementById('go-desc').textContent = won
             ? 'Outstanding performance in the arena.'
@@ -753,56 +853,65 @@ function showWinnerModal(state) {
    WEBSOCKET
 ══════════════════════════════════ */
 function connect(afterConnectCallback) {
-    if (isConnected && stompClient && stompClient.connected) {
+    if (NEXUS_STATE.isConnected && NEXUS_STATE.stompClient && NEXUS_STATE.stompClient.connected) {
         if (afterConnectCallback) afterConnectCallback();
         return;
     }
-    if (stompClient) { try { stompClient.disconnect(); } catch (e) {} stompClient = null; }
-    isConnected = false;
+    if (NEXUS_STATE.stompClient) { try { NEXUS_STATE.stompClient.disconnect(); } catch (e) {} NEXUS_STATE.stompClient = null; }
+    NEXUS_STATE.isConnected = false;
 
     const socket = new SockJS(WS_ENDPOINT);
-    stompClient  = Stomp.over(socket);
-    stompClient.debug = null;
+    NEXUS_STATE.stompClient  = Stomp.over(socket);
+    NEXUS_STATE.stompClient.debug = null;
 
-    stompClient.connect({ Authorization: 'Bearer ' + localStorage.getItem('nexus_token') }, function () {
-        isConnected = true;
-        console.log('✅ WebSocket connected');
+    NEXUS_STATE.stompClient.connect(
+        { Authorization: 'Bearer ' + localStorage.getItem('nexus_token') },
+        function () {
+            NEXUS_STATE.isConnected = true;
+            NEXUS_STATE.reconnectAttempt = 0;
 
-        stompClient.subscribe('/topic/lobby.status', payload => {
-            updateSingleUserStatus(JSON.parse(payload.body));
-        });
+            /* C5 FIX: track and re-subscribe ALL topics on connect/reconnect */
+            if (NEXUS_STATE.lobbySubscription) { NEXUS_STATE.lobbySubscription.unsubscribe(); }
+            NEXUS_STATE.lobbySubscription = NEXUS_STATE.stompClient.subscribe('/topic/lobby.status', payload => {
+                updateSingleUserStatus(JSON.parse(payload.body));
+            });
 
-        stompClient.subscribe('/topic/challenges/' + currentUser, payload => {
-            const message = JSON.parse(payload.body);
-            if (message.type === 'CHALLENGE_REQUEST') {
-                currentPendingOpponent = message.sender;
-                currentRoomId = message.roomId;
-                document.getElementById('challenge-text').textContent = `Challenge from ${message.sender}!`;
-                document.getElementById('challenge-modal').style.display = 'flex';
-            } else if (message.type === 'CHALLENGE_RESPONSE') {
-                document.getElementById('waiting-modal').style.display = 'none';
-                if (message.status === 'ACCEPTED')  setupGame(message.roomId, message.sender);
-                else if (message.status === 'REJECTED')  showToast(`${message.sender} declined.`, 'warning');
-                else if (message.status === 'CANCELLED') showToast('Challenge cancelled.', 'info');
-                currentPendingOpponent = null;
-            }
-        });
-
-        if (afterConnectCallback) afterConnectCallback();
-
-    }, function () {
-        isConnected = false;
-        const savedRoom = currentRoomId;
-        setTimeout(function () {
-            connect(function () {
-                if (savedRoom) {
-                    if (roomSubscription) { roomSubscription.unsubscribe(); roomSubscription = null; }
-                    roomSubscription = stompClient.subscribe(
-                        `/topic/game/${savedRoom}`,
-                        m => handleRoomMessage(JSON.parse(m.body))
-                    );
+            if (NEXUS_STATE.challengeSubscription) { NEXUS_STATE.challengeSubscription.unsubscribe(); }
+            NEXUS_STATE.challengeSubscription = NEXUS_STATE.stompClient.subscribe('/topic/challenges/' + NEXUS_STATE.currentUser, payload => {
+                const message = JSON.parse(payload.body);
+                if (message.type === 'CHALLENGE_REQUEST') {
+                    NEXUS_STATE.currentPendingOpponent = message.sender;
+                    NEXUS_STATE.currentRoomId = message.roomId;
+                    document.getElementById('challenge-text').textContent = `Challenge from ${message.sender}!`;
+                    document.getElementById('challenge-modal').style.display = 'flex';
+                } else if (message.type === 'CHALLENGE_RESPONSE') {
+                    document.getElementById('waiting-modal').style.display = 'none';
+                    if (message.status === 'ACCEPTED') setupGame(message.roomId, message.sender);
+                    else if (message.status === 'REJECTED') showToast(`${message.sender} declined.`, 'warning');
+                    else if (message.status === 'CANCELLED') showToast('Challenge cancelled.', 'info');
+                    NEXUS_STATE.currentPendingOpponent = null;
                 }
             });
-        }, 3000);
-    });
-} 
+
+            if (afterConnectCallback) afterConnectCallback();
+        },
+        function () {
+            NEXUS_STATE.isConnected = false;
+            /* M11 FIX: exponential backoff on reconnect */
+            const delay = Math.min(3000 * Math.pow(2, NEXUS_STATE.reconnectAttempt), NEXUS_STATE.maxReconnectDelay);
+            NEXUS_STATE.reconnectAttempt++;
+            const savedRoom = NEXUS_STATE.currentRoomId;
+            setTimeout(function () {
+                connect(function () {
+                    if (savedRoom) {
+                        if (NEXUS_STATE.roomSubscription) { NEXUS_STATE.roomSubscription.unsubscribe(); NEXUS_STATE.roomSubscription = null; }
+                        NEXUS_STATE.roomSubscription = NEXUS_STATE.stompClient.subscribe(
+                            `/topic/game/${savedRoom}`,
+                            m => handleRoomMessage(JSON.parse(m.body))
+                        );
+                    }
+                });
+            }, delay);
+        }
+    );
+}

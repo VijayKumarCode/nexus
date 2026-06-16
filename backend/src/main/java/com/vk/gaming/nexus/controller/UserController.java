@@ -68,30 +68,28 @@ public class UserController {
     }
 
     @PostMapping("/resend-activation")
-    public ResponseEntity<Void> resendActivation(
+    public ResponseEntity<?> resendActivation(
             @RequestBody @Valid EmailRequest request) {
 
         try {
+
             userService.resendActivationLink(request.getEmail());
 
-            return ResponseEntity
-                    .status(HttpStatus.FOUND)
-                    .header(
-                            HttpHeaders.LOCATION,
-                            "https://www.nexusgame.space/resend-activation?success=true"
+            return ResponseEntity.ok(
+                    Map.of(
+                            "success", true,
+                            "message", "Activation link resent."
                     )
-                    .build();
+            );
 
         } catch (RuntimeException e) {
 
-            return ResponseEntity
-                    .status(HttpStatus.FOUND)
-                    .header(
-                            HttpHeaders.LOCATION,
-                            "https://www.nexusgame.space/resend-activation?success=false&message="
-                                    + URLEncoder.encode(e.getMessage(), StandardCharsets.UTF_8)
+            return ResponseEntity.badRequest().body(
+                    Map.of(
+                            "success", false,
+                            "error", e.getMessage()
                     )
-                    .build();
+            );
         }
     }
 

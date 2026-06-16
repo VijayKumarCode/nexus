@@ -100,8 +100,14 @@ async function handleSubmit(e) {
 
         const data = await response.json();
 
-        showState("success-state");
-        startCooldown();
+        if (response.ok) {
+            showState("success-state");
+            startCooldown();
+        } else {
+            showState("error-state");
+            getElement("error-message").textContent =
+                data.error || "Unable to resend activation email.";
+        }
 
     } catch (err) {
         console.error(err);

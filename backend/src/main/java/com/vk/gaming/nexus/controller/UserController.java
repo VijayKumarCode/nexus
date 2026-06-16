@@ -11,11 +11,15 @@ import com.vk.gaming.nexus.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -47,19 +51,47 @@ public class UserController {
     public ResponseEntity<?> activateAccount(@RequestParam String token) {
         boolean activated = userService.activateAccount(token);
         if (activated) {
-            return ResponseEntity.ok(Map.of("message", "Account activated successfully! You can now log in."));
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .header(
+                            HttpHeaders.LOCATION,
+                            "https://www.nexusgame.space/activate?success=true"
+                    )
+                    .build();
         }
-        return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired activation link."));
+        return ResponseEntity
+                .status(HttpStatus.FOUND)
+                .header(
+                        HttpHeaders.LOCATION,
+                        "https://www.nexusgame.space/activate?success=false"
+                )
+                .build();
     }
 
     @PostMapping("/resend-activation")
-    public ResponseEntity<?> resendActivation(@RequestBody @Valid EmailRequest request) {
+    public ResponseEntity<Void> resendActivation(
+            @RequestBody @Valid EmailRequest request) {
+
         try {
             userService.resendActivationLink(request.getEmail());
-            return ResponseEntity.ok(Map.of("message", "Activation link resent. Check your email."));
+
+            return ResponseEntity
+                    .status(HttpStatus.FOUND)
+                    .header(
+                            HttpHeaders.LOCATION,
+                            "https://www.nexusgame.space/resend-activation?success=true"
+                    )
+                    .build();
+
         } catch (RuntimeException e) {
-            log.warn("Resend activation failed: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+
+            return ResponseEntity
+                    .status(HttpStatus.FOUND)
+                    .header(
+                            HttpHeaders.LOCATION,
+                            "https://www.nexusgame.space/resend-activation?success=false&message="
+                                    + URLEncoder.encode(e.getMessage(), StandardCharsets.UTF_8)
+                    )
+                    .build();
         }
     }
 

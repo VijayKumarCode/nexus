@@ -31,13 +31,13 @@
 /* ══════════════════════════════════
    CONFIG
 ══════════════════════════════════ */
-const BACKEND_URL = (typeof window !== 'undefined' && window.NEXUS_CONFIG && window.NEXUS_CONFIG.apiUrl)
-    ? window.NEXUS_CONFIG.apiUrl
-    : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-        ? ''
-        : 'https://nexus-yxa3.onrender.com';
+const BACKEND_URL =
+    (window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1')
+        ? 'http://localhost:8080'
+        : '';
 
-const API_BASE    = BACKEND_URL + '/api/users';
+const API_BASE = BACKEND_URL + '/api/users';
 const RECOVERY_BASE = BACKEND_URL + '/api/recovery';
 const WS_ENDPOINT = BACKEND_URL + '/game-websocket';
 

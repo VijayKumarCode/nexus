@@ -13,9 +13,10 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: update
-      naming:
-      physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     show-sql: false
+
+server:
+  port: ${PORT:8080}
 
 app:
   base-url: ${APP_BASE}
@@ -23,7 +24,6 @@ app:
   mail-from: ${MAIL_FROM:noreply@nexusgame.space}
 
   jwt-secret: ${JWT_SECRET}
-
   jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
   allowed-origins:
@@ -31,9 +31,6 @@ app:
     - https://www.nexusgame.space
 
   resend-api-key: ${RESEND_API_KEY}
-
-server:
-  port: ${PORT:8080}
 
 cors:
   allowed-origins:

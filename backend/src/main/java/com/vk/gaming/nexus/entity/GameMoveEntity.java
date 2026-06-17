@@ -22,10 +22,10 @@ public class GameMoveEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(name = "room_id", nullable = false)
     private String roomId;
 
-    @Column(nullable = false)
+    @Column(name = "player_username", nullable = false)
     private String playerUsername;
 
     @Column(name = "board_position", nullable = false)

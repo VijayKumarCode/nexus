@@ -1,9 +1,6 @@
 package com.vk.gaming.nexus.controller;
 
-import com.vk.gaming.nexus.dto.AuthRequest;
-import com.vk.gaming.nexus.dto.AuthResponse;
-import com.vk.gaming.nexus.dto.EmailRequest;
-import com.vk.gaming.nexus.dto.LeaderboardEntryDto;
+import com.vk.gaming.nexus.dto.*;
 import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.service.JwtService;
@@ -94,7 +91,7 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody @Valid AuthRequest request) {
+    public ResponseEntity<?> login(@RequestBody @Valid LoginRequest request) {
         try {
             User user = userService.loginUser(request);
             String token = jwtService.generateToken(user.getUsername());

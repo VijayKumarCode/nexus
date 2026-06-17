@@ -2,13 +2,16 @@ package com.vk.gaming.nexus.service;
 
 import com.vk.gaming.nexus.dto.AuthRequest;
 import com.vk.gaming.nexus.dto.LeaderboardEntryDto;
+import com.vk.gaming.nexus.dto.LoginRequest;
 import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.exceptions.EmailAlreadyRegisteredException;
 import com.vk.gaming.nexus.exceptions.UsernameTakenException;
 import com.vk.gaming.nexus.repository.UserRepository;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -75,7 +78,7 @@ public class UserService {
     }
 
     @Transactional
-    public User loginUser(AuthRequest request) {
+    public User loginUser(@Valid @MonotonicNonNull LoginRequest request) {
         User user = userRepository.findByUsername(request.getUsername()).orElse(null);
 
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {

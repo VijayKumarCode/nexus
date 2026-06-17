@@ -41,16 +41,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         String endpoint = "/game-websocket";
 
-        var endpointReg = registry.addEndpoint(endpoint);
-
-        var origins = appProperties.getAllowedOrigins();
-        if (origins != null && !origins.isEmpty()) {
-            endpointReg.setAllowedOrigins(origins.toArray(new String[0]));
-        } else {
-            endpointReg.setAllowedOrigins("http://localhost:3000", "http://localhost:8080");
-        }
-
-        endpointReg.withSockJS();
+        registry.addEndpoint(endpoint)
+                .setAllowedOriginPatterns("*") // Allows secure cloud environment fallback matching
+                .withSockJS();
     }
 
     @Override

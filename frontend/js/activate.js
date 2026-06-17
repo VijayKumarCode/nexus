@@ -1,12 +1,12 @@
 function hideAllStates() {
     document.querySelectorAll(".state").forEach(el => {
-        el.style.display = "none";
+        el.classList.remove("active");
     });
 }
 
 function showState(id) {
     hideAllStates();
-    document.getElementById(id).style.display = "block";
+    document.getElementById(id).classList.add("active");
 }
 
 function initializeActivationPage() {

@@ -19,21 +19,19 @@
 
         <form id="resend-form" novalidate>
             <div class="form-group">
+                <label for="email">Email Address</label>
                 <input
                         type="email"
                         id="email"
                         name="email"
                         placeholder="your@email.com"
                         required
-                        autocomplete="email"
-                        aria-label="Email address"
-                >
+                        autocomplete="email">
                 <span id="email-error" class="field-error" role="alert"></span>
             </div>
 
             <button type="submit" id="submit-btn" class="btn-primary">
                 <span class="btn-text">Send Activation Link</span>
-                <span class="btn-spinner hidden"></span>
             </button>
         </form>
 
@@ -47,24 +45,35 @@
         <p>Sending activation link...</p>
     </div>
 
-    <div id="success-state" class="state">
+    <div id="success-state" class="state"  role="status">
         <div class="icon success-icon">✓</div>
         <h2>Link Sent!</h2>
         <p>If an account exists with that email, you will receive a new activation link shortly.</p>
         <p class="sub-text">Did not receive it? Check your spam folder or wait 60 seconds to request another.</p>
-        <button onclick="resetForm()" class="btn-secondary" id="resend-btn" disabled>
+        <button
+                type="button"
+                onclick="resetForm()"
+                class="btn-secondary"
+                id="resend-btn"
+                disabled>
             Resend (<span id="countdown">60</span>s)
         </button>
+
         <p class="form-footer">
             <a href="/login">Back to Login</a>
         </p>
     </div>
 
-    <div id="error-state" class="state">
+    <div id="error-state" class="state" role="alert">
         <div class="icon error-icon">✕</div>
         <h2>Request Failed</h2>
         <p id="error-message">Something went wrong. Please try again later.</p>
-        <button onclick="resetForm()" class="btn-secondary">Try Again</button>
+        <button
+                type="button"
+                onclick="resetForm()"
+                class="btn-secondary">
+            Try Again </button>
+
         <p class="form-footer">
             <a href="/login">Back to Login</a>
         </p>

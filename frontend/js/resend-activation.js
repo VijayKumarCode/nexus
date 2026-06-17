@@ -8,13 +8,13 @@ function getElement(id) {
 
 function hideAllStates() {
     document.querySelectorAll(".state").forEach(el => {
-        el.style.display = "none";
+        el.classList.remove("active");
     });
 }
 
 function showState(id) {
     hideAllStates();
-    getElement(id).style.display = "block";
+    document.getElementById(id).classList.add("active");
 }
 
 function validateEmail(email) {

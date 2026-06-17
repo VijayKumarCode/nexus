@@ -35,11 +35,11 @@ public class GameService {
     private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
 
     public boolean isRoomParticipant(String roomId, String username) {
-        String[] players = roomPlayers.get(roomId);
-        if (players == null) {
+        if (roomId == null || username == null) {
             return false;
         }
-        return username.equals(players[0]) || username.equals(players[1]);
+        String[] players = roomPlayers.get(roomId);
+        return players != null && (username.equals(players[0]) || username.equals(players[1]));
     }
 
     @Transactional

@@ -47,17 +47,31 @@ public class GameController {
     }
 
     @MessageMapping("/toss/{roomId}")
-    public void handleToss(@DestinationVariable String roomId,
-                           @Payload @Valid TossRequest request,
-                           Principal principal) {
-        if (!gameService.isRoomParticipant(roomId, principal.getName())) {
-            log.warn("Unauthorized toss attempt by {} in room {}", principal.getName(), roomId);
+    public void handleToss(@DestinationVariable String roomId, Principal principal) {
+        String username = principal.getName();
+
+        // 1. Verify authorization
+        if (!gameService.isRoomParticipant(roomId, username)) {
+            log.warn("Unauthorized toss attempt by {} in room {}", username, roomId);
             return;
         }
-        request.setRoomId(roomId);
-        log.info("Toss requested — room={}", roomId);
-        GameSystemMessage result = gameService.processToss(request);
-        messagingTemplate.convertAndSend("/topic/game/" + roomId, result);
+
+        // 2. Construct the required TossRequest DTO
+        // We split the room ID to identify the two players
+        String[] players = roomId.split("_");
+        if (players.length < 2) return;
+
+        TossRequest tossRequest = new TossRequest();
+        tossRequest.setRoomId(roomId);
+        tossRequest.setPlayerOne(players[0]);
+        tossRequest.setPlayerTwo(players[1]);
+
+        log.info("Toss initiated — room={} by={}", roomId, username);
+
+        // 3. Call the correct service method
+        GameSystemMessage tossMessage = gameService.processToss(tossRequest);
+
+        messagingTemplate.convertAndSend("/topic/game/" + roomId, tossMessage);
     }
 
     @MessageMapping("/move/{roomId}")
@@ -99,14 +113,11 @@ public class GameController {
         messagingTemplate.convertAndSend("/topic/game/" + roomId, reset);
     }
 
-    @MessageMapping("/game.abort")
-    public void handleAbort(@Payload @Valid ChallengeMessage message, Principal principal) {
+    @MessageMapping("/game/abort")
+    public void handleAbort(@Payload ChallengeMessage message, Principal principal) {
         String username = principal.getName();
-        if (!gameService.isRoomParticipant(message.getRoomId(), username)) {
-            log.warn("Unauthorized abort attempt by {} in room {}", username, message.getRoomId());
-            return;
-        }
         log.info("Game aborted — room={} by={}", message.getRoomId(), username);
+
         gameService.markPlayersOnlineByRoom(message.getRoomId());
         message.setType(MessageType.GAME_ABORTED);
         message.setStatus(ChallengeStatus.CANCELLED);

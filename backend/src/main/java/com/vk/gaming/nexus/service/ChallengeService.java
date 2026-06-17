@@ -94,18 +94,48 @@ public class ChallengeService {
         });
     }
 
+    /**
+     * Cleans up any pending challenges involving a disconnected user
+     * and sends a cancellation broadcast to the surviving opponent.
+     *
+     * @param disconnectedUser The username of the player who went offline.
+     */
     @Transactional
-    public void cancelStaleChallenges(String username) {
-        List<ChallengeEntity> pending =
-                challengeRepository.findPendingByUser(username, ChallengeStatus.PENDING);
+    public void cancelStaleChallenges(String disconnectedUser) {
+        log.debug("Processing disconnect cleanup for challenges involving user: {}", disconnectedUser);
 
-        challengeRepository.cancelAllPendingForUser(username, ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
+        // 1. Leverage your existing custom repository query
+        List<ChallengeEntity> activeChallenges = challengeRepository
+                .findPendingByUser(disconnectedUser, ChallengeStatus.PENDING);
 
-        for (ChallengeEntity stale : pending) {
-            notifyCancellation(username, stale);
+        if (activeChallenges.isEmpty()) {
+            return;
         }
 
-        log.info("Cancelled {} stale challenges for {}", pending.size(), username);
+        for (ChallengeEntity challenge : activeChallenges) {
+            // 2. Terminate the challenge state
+            challenge.setStatus(ChallengeStatus.CANCELLED);
+            challengeRepository.save(challenge);
+
+            // 3. Extract the active player who is still online waiting in the modal
+            String survivingPlayer = challenge.getSender().equals(disconnectedUser)
+                    ? challenge.getReceiver()
+                    : challenge.getSender();
+
+            // 4. Construct the payload matching your ChallengeMessage DTO structure
+            ChallengeMessage abortMsg = new ChallengeMessage();
+            abortMsg.setType(MessageType.CHALLENGE_RESPONSE);
+            abortMsg.setStatus(ChallengeStatus.CANCELLED);
+            abortMsg.setSender(disconnectedUser);
+            abortMsg.setReceiver(survivingPlayer);
+            abortMsg.setRoomId(challenge.getRoomId());
+
+            log.info("Notifying surviving player [{}] that challenge in room [{}] was cancelled due to disconnect.",
+                    survivingPlayer, challenge.getRoomId());
+
+            // 5. Publish to the exact topic your frontend is subscribing to in nexus.js
+            messagingTemplate.convertAndSend("/topic/challenges/" + survivingPlayer, abortMsg);
+        }
     }
 
     @Scheduled(fixedRateString = "${challenge.expiry-check-rate-ms:5000}")

@@ -28,7 +28,7 @@ public class GameMoveEntity {
     @Column(nullable = false)
     private String playerUsername;
 
-    @Column(nullable = false)
+    @Column(name = "board_position", nullable = false)
     private int boardPosition;
 
     @Column(nullable = false)

@@ -36,14 +36,35 @@ public class GameController {
     }
 
     @MessageMapping("/challenge/reply")
-    public void handleChallengeReply(@Payload @Valid ChallengeMessage message, Principal principal) {
+    public void handleChallengeReply(
+            @Payload @Valid ChallengeMessage message,
+            Principal principal) {
+
         String replier = principal.getName();
-        log.info("Challenge reply from {}: status={}", replier, message.getStatus());
+
+        log.info(
+                "Challenge reply from {}: status={}",
+                replier,
+                message.getStatus()
+        );
+
         if (message.getStatus() == ChallengeStatus.ACCEPTED) {
+
             gameService.resetGame(message.getRoomId());
+
+            gameService.registerRoom(
+                    message.getRoomId(),
+                    message.getSender(),
+                    message.getReceiver()
+            );
         }
+
         challengeService.respondToChallenge(message);
-        messagingTemplate.convertAndSend("/topic/challenges/" + message.getReceiver(), message);
+
+        messagingTemplate.convertAndSend(
+                "/topic/challenges/" + message.getReceiver(),
+                message
+        );
     }
 
     @MessageMapping("/toss/{roomId}")

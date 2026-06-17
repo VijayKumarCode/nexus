@@ -34,12 +34,26 @@ public class GameService {
     private final Map<String, String> playerO = new ConcurrentHashMap<>();
     private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
 
-    public boolean isRoomParticipant(String roomId, String username) {
+    public boolean isRoomParticipant(String roomId,
+                                     String username) {
+
         if (roomId == null || username == null) {
             return false;
         }
+
         String[] players = roomPlayers.get(roomId);
-        return players != null && (username.equals(players[0]) || username.equals(players[1]));
+
+        log.info(
+                "AUTH CHECK room={} username={} players={}",
+                roomId,
+                username,
+                players == null ? "null" :
+                        java.util.Arrays.toString(players)
+        );
+
+        return players != null &&
+                (username.equals(players[0]) ||
+                        username.equals(players[1]));
     }
 
     @Transactional
@@ -243,12 +257,30 @@ public class GameService {
     @Transactional
     public void resetGame(String roomId) {
         gameMoveRepository.deleteByRoomId(roomId);
+
         currentTurn.remove(roomId);
         playerX.remove(roomId);
         playerO.remove(roomId);
         tossWinner.remove(roomId);
-        roomPlayers.remove(roomId);
+
         log.info("Game reset — room={}", roomId);
+    }
+
+    public void registerRoom(String roomId,
+                             String playerOne,
+                             String playerTwo) {
+
+        roomPlayers.put(
+                roomId,
+                new String[]{playerOne, playerTwo}
+        );
+
+        log.info(
+                "Room registered: {} [{} vs {}]",
+                roomId,
+                playerOne,
+                playerTwo
+        );
     }
 
     @Transactional

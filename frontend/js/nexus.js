@@ -560,6 +560,13 @@ async function refreshLeaderboard() {
 }
 
 function updateSingleUserStatus(update) {
+
+    console.log(
+        "LOBBY STATUS EVENT",
+        update.username,
+        update.status
+    );
+
     if (update.status === 'OFFLINE') {
         const row = document.querySelector(`[data-username="${CSS.escape(update.username)}"]`);
         if (row) row.remove();
@@ -639,13 +646,22 @@ function requestRematch() {
 }
 
 function leaveGame() {
+    console.log("LEAVE GAME CLICKED");
     ['game-over-modal', 'toss-modal', 'waiting-modal', 'challenge-modal'].forEach(id => {
         document.getElementById(id).style.display = 'none';
     });
 
     if (NEXUS_STATE.currentRoomId && NEXUS_STATE.stompClient) {
+
+        console.log(
+            "SENDING ABORT",
+            NEXUS_STATE.currentRoomId
+        );
+
         NEXUS_STATE.stompClient.send('/app/game.abort', {}, JSON.stringify({
-            sender: NEXUS_STATE.currentUser, roomId: NEXUS_STATE.currentRoomId, type: 'GAME_ABORTED'
+            sender: NEXUS_STATE.currentUser,
+            roomId: NEXUS_STATE.currentRoomId,
+            type: 'GAME_ABORTED'
         }));
     }
 

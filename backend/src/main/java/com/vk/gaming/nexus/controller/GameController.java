@@ -136,20 +136,47 @@ public class GameController {
 
     @MessageMapping("/game/abort")
     public void handleAbort(@Payload ChallengeMessage message, Principal principal) {
+
         String username = principal.getName();
-        log.info("Game aborted — room={} by={}", message.getRoomId(), username);
+
+        log.info("========== GAME ABORT ==========");
+        log.info("room={}", message.getRoomId());
+        log.info("player={}", username);
 
         gameService.markPlayersOnlineByRoom(message.getRoomId());
+
+        log.info("markPlayersOnlineByRoom completed");
+
         message.setType(MessageType.GAME_ABORTED);
         message.setStatus(ChallengeStatus.CANCELLED);
         message.setSender(username);
-        messagingTemplate.convertAndSend("/topic/game/" + message.getRoomId(), message);
+
+        messagingTemplate.convertAndSend(
+                "/topic/game/" + message.getRoomId(),
+                message
+        );
 
         String[] parts = message.getRoomId().split("_");
+
+        log.info("room split={}", java.util.Arrays.toString(parts));
+
         if (parts.length >= 2) {
-            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(parts[0], UserStatus.ONLINE));
-            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(parts[1], UserStatus.ONLINE));
+
+            log.info("Broadcasting ONLINE for {}", parts[0]);
+            log.info("Broadcasting ONLINE for {}", parts[1]);
+
+            messagingTemplate.convertAndSend(
+                    "/topic/lobby.status",
+                    new PlayerStatus(parts[0], UserStatus.ONLINE)
+            );
+
+            messagingTemplate.convertAndSend(
+                    "/topic/lobby.status",
+                    new PlayerStatus(parts[1], UserStatus.ONLINE)
+            );
         }
+
+        log.info("========== END ABORT ==========");
     }
 
     @MessageMapping("/toss/decision/{roomId}")

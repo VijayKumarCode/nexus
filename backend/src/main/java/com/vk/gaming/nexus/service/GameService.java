@@ -285,9 +285,16 @@ public class GameService {
 
     @Transactional
     public void markPlayersOnlineByRoom(String roomId) {
+        log.info("markPlayersOnlineByRoom called room={}", roomId);
+
         resetGame(roomId);
+
         String[] parts = roomId.split("_");
+
         if (parts.length >= 2) {
+            log.info("Resetting user {}", parts[0]);
+            log.info("Resetting user {}", parts[1]);
+
             resetUser(parts[0]);
             resetUser(parts[1]);
         }

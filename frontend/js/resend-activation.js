@@ -14,7 +14,10 @@ function hideAllStates() {
 
 function showState(id) {
     hideAllStates();
-    document.getElementById(id).classList.add("active");
+    const stateEl = getElement(id);
+    if (stateEl) {
+        stateEl.classList.add("active");
+    }
 }
 
 function validateEmail(email) {
@@ -23,25 +26,51 @@ function validateEmail(email) {
 }
 
 function showFieldError(message) {
-    getElement("email-error").textContent = message;
-    getElement("email").classList.add("invalid");
-    getElement("email").setAttribute("aria-invalid", "true");
+    const errorEl = getElement("email-error");
+    const emailEl = getElement("email");
+    if (errorEl) errorEl.textContent = message;
+    if (emailEl) {
+        emailEl.classList.add("invalid");
+        emailEl.setAttribute("aria-invalid", "true");
+    }
 }
 
 function clearFieldError() {
-    getElement("email-error").textContent = "";
-    getElement("email").classList.remove("invalid");
-    getElement("email").setAttribute("aria-invalid", "false");
+    const errorEl = getElement("email-error");
+    const emailEl = getElement("email");
+    if (errorEl) errorEl.textContent = "";
+    if (emailEl) {
+        emailEl.classList.remove("invalid");
+        emailEl.setAttribute("aria-invalid", "false");
+    }
 }
 
 function setLoading(loading) {
     const submitBtn = getElement("submit-btn");
+    if (!submitBtn) return; // Safeguard if the button element is completely missing
+
     const btnText = submitBtn.querySelector(".btn-text");
     const btnSpinner = submitBtn.querySelector(".btn-spinner");
 
     submitBtn.disabled = loading;
-    btnText.style.display = loading ? "none" : "inline";
-    btnSpinner.style.display = loading ? "inline-block" : "none";
+
+    // Safely adjust display layout configurations if the elements exist
+    if (btnText) {
+        btnText.style.display = loading ? "none" : "inline";
+    }
+    if (btnSpinner) {
+        btnSpinner.style.display = loading ? "inline-block" : "none";
+    }
+
+    // Safe fallback: If helper spans are completely missing, adjust the raw button text directly
+    if (!btnText && !btnSpinner) {
+        if (loading) {
+            submitBtn.dataset.originalText = submitBtn.textContent;
+            submitBtn.textContent = "Sending...";
+        } else if (submitBtn.dataset.originalText) {
+            submitBtn.textContent = submitBtn.dataset.originalText;
+        }
+    }
 }
 
 function startCooldown() {
@@ -49,54 +78,60 @@ function startCooldown() {
     const resendBtn = getElement("resend-btn");
     const countdown = getElement("countdown");
 
-    resendBtn.disabled = true;
-    countdown.textContent = remaining;
+    if (resendBtn) resendBtn.disabled = true;
+    if (countdown) countdown.textContent = remaining;
 
     cooldownTimer = setInterval(() => {
         remaining--;
-        countdown.textContent = remaining;
+        if (countdown) countdown.textContent = remaining;
 
         if (remaining <= 0) {
             clearInterval(cooldownTimer);
-            resendBtn.disabled = false;
-            resendBtn.innerHTML = "Resend Link";
+            if (resendBtn) {
+                resendBtn.disabled = false;
+                resendBtn.innerHTML = "Resend Link";
+            }
         }
     }, 1000);
 }
 
 async function handleSubmit(e) {
     e.preventDefault();
+    clearFieldError();
 
-    if (cooldownTimer) return;
-
-    const emailInput = getElement("email");
-    const email = emailInput.value.trim();
+    const emailEl = getElement("email");
+    if (!emailEl) return;
+    const email = emailEl.value.trim();
 
     if (!email) {
         showFieldError("Email address is required");
-        emailInput.focus();
+        emailEl.focus();
         return;
     }
 
     if (!validateEmail(email)) {
         showFieldError("Please enter a valid email address");
-        emailInput.focus();
+        emailEl.focus();
         return;
     }
 
     setLoading(true);
+    showState("loading-state");
 
     try {
-        // Dynamic endpoint generation from global config
-        const response = await fetch(`${API_BASE_URL}${CONFIG.ENDPOINTS.RESEND_ACTIVATION}`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ email: email })
-        });
+        const response = await fetch(
+            `${API_BASE_URL}${CONFIG.ENDPOINTS.RESEND_ACTIVATION}`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                body: JSON.stringify({ email: email })
+            }
+        );
 
-        // Safe JSON parsing defense against raw HTML error pages
+        // Defend against server responses that are not JSON format (like 502 Bad Gateway HTML pages)
         let data = {};
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.includes("application/json")) {
@@ -108,14 +143,19 @@ async function handleSubmit(e) {
             startCooldown();
         } else {
             showState("error-state");
-            getElement("error-message").textContent =
-                data.error || data.message || "Unable to resend activation email.";
+            const errorMessageEl = getElement("error-message");
+            if (errorMessageEl) {
+                errorMessageEl.textContent = data.error || data.message || "Unable to resend activation email.";
+            }
         }
 
     } catch (err) {
-        console.error("Network or parsing error:", err);
+        console.error("Network or parsing error details:", err);
         showState("error-state");
-        getElement("error-message").textContent = "Unable to connect to the server. Please check your internet connection.";
+        const errorMessageEl = getElement("error-message");
+        if (errorMessageEl) {
+            errorMessageEl.textContent = "Unable to connect to server.";
+        }
     } finally {
         setLoading(false);
     }
@@ -123,29 +163,42 @@ async function handleSubmit(e) {
 
 function resetForm() {
     clearFieldError();
-    getElement("email").value = "";
-    showState("form-state");
-    getElement("email").focus();
+    const emailEl = getElement("email");
+    if (emailEl) {
+        emailEl.value = "";
+        showState("form-state");
+        emailEl.focus();
+    } else {
+        showState("form-state");
+    }
 }
 
-getElement("resend-form").addEventListener("submit", handleSubmit);
+// Attach event handlers safely checking if nodes exist
+const resendForm = getElement("resend-form");
+if (resendForm) {
+    resendForm.addEventListener("submit", handleSubmit);
+}
 
-getElement("email").addEventListener("input", () => {
-    if (getElement("email").classList.contains("invalid")) {
-        clearFieldError();
-    }
-});
+const emailInput = getElement("email");
+if (emailInput) {
+    emailInput.addEventListener("input", () => {
+        if (emailInput.classList.contains("invalid")) {
+            clearFieldError();
+        }
+    });
 
-getElement("email").addEventListener("blur", () => {
-    const email = getElement("email").value.trim();
-    if (email && !validateEmail(email)) {
-        showFieldError("Please enter a valid email address");
-    }
-});
+    emailInput.addEventListener("blur", () => {
+        const email = emailInput.value.trim();
+        if (email && !validateEmail(email)) {
+            showFieldError("Please enter a valid email address");
+        }
+    });
+}
 
 document.addEventListener("DOMContentLoaded", () => {
     showState("form-state");
-    getElement("email").focus();
+    const emailEl = getElement("email");
+    if (emailEl) emailEl.focus();
 });
 
 window.addEventListener("beforeunload", () => {

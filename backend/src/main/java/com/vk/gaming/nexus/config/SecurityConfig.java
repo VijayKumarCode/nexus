@@ -79,16 +79,24 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
+        // 1. Collect origins from properties
         List<String> origins = appProperties.getAllowedOrigins();
+
+        // 2. Safeguard: If origins list is empty, default to local development paths
         if (origins == null || origins.isEmpty()) {
             origins = List.of("http://localhost:3000", "http://localhost:8080");
         }
 
         config.setAllowedOrigins(origins);
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
+
+        // 3. Allow standard HTTP methods including PATCH
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+
+        // 4. FIX: Allow all headers to prevent browsers from crashing on preflight requests
+        config.setAllowedHeaders(List.of("*"));
+
         config.setAllowCredentials(true);
-        config.setMaxAge(3600L);
+        config.setMaxAge(3600L); // Cache preflight checks for 1 hour
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

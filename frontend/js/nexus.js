@@ -448,7 +448,14 @@ const AuthManager = {
     logout() {
         StorageManager.clearAll();
         this.stopHeartbeat();
-        LobbyManager.clearTimers();
+
+        // SAFE GUARD: Check if LobbyManager exists and has the method before calling it
+        if (typeof LobbyManager !== 'undefined' && typeof LobbyManager.clearTimers === 'function') {
+            LobbyManager.clearTimers();
+        } else {
+            console.warn("LobbyManager or clearTimers method not initialized yet during this logout cycle.");
+        }
+
         if (STATE.auth.usernameCheckTimeoutId) clearTimeout(STATE.auth.usernameCheckTimeoutId);
 
         WebSocketManager.disconnect();

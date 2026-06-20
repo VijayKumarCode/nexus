@@ -66,39 +66,42 @@ function startCooldown() {
 
 async function handleSubmit(e) {
     e.preventDefault();
-    clearFieldError();
 
-    const email = getElement("email").value.trim();
+    if (cooldownTimer) return;
+
+    const emailInput = getElement("email");
+    const email = emailInput.value.trim();
 
     if (!email) {
         showFieldError("Email address is required");
-        getElement("email").focus();
+        emailInput.focus();
         return;
     }
 
     if (!validateEmail(email)) {
         showFieldError("Please enter a valid email address");
-        getElement("email").focus();
+        emailInput.focus();
         return;
     }
 
     setLoading(true);
-    showState("loading-state");
 
     try {
-        const response = await fetch(
-            `${API_BASE_URL}${CONFIG.ENDPOINTS.RESEND_ACTIVATION}`,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                },
-                body: JSON.stringify({ email: email })
-            }
-        );
+        // Dynamic endpoint generation from global config
+        const response = await fetch(`${API_BASE_URL}${CONFIG.ENDPOINTS.RESEND_ACTIVATION}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ email: email })
+        });
 
-        const data = await response.json();
+        // Safe JSON parsing defense against raw HTML error pages
+        let data = {};
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+            data = await response.json();
+        }
 
         if (response.ok) {
             showState("success-state");
@@ -106,14 +109,13 @@ async function handleSubmit(e) {
         } else {
             showState("error-state");
             getElement("error-message").textContent =
-                data.error || "Unable to resend activation email.";
+                data.error || data.message || "Unable to resend activation email.";
         }
 
     } catch (err) {
-        console.error(err);
+        console.error("Network or parsing error:", err);
         showState("error-state");
-        getElement("error-message").textContent =
-            "Unable to connect to server.";
+        getElement("error-message").textContent = "Unable to connect to the server. Please check your internet connection.";
     } finally {
         setLoading(false);
     }

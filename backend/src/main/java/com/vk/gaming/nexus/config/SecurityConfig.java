@@ -63,6 +63,8 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // explicitly permit all OPTIONS preflight requests
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/users/login", "/api/users/register",
                                 "/api/users/activate", "/api/users/resend-activation").permitAll()
                         .requestMatchers("/api/recovery/**").permitAll()
@@ -79,24 +81,18 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // 1. Collect origins from properties
-        List<String> origins = appProperties.getAllowedOrigins();
+        // Hardcode the allowed patterns to bypass environment variable list-parsing bugs
+        config.setAllowedOriginPatterns(List.of(
+                "https://nexusgame.space",
+                "https://www.nexusgame.space",
+                "http://localhost:3000",
+                "http://localhost:8080"
+        ));
 
-        // 2. Safeguard: If origins list is empty, default to local development paths
-        if (origins == null || origins.isEmpty()) {
-            origins = List.of("http://localhost:3000", "http://localhost:8080");
-        }
-
-        config.setAllowedOrigins(origins);
-
-        // 3. Allow standard HTTP methods including PATCH
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-
-        // 4. FIX: Allow all headers to prevent browsers from crashing on preflight requests
         config.setAllowedHeaders(List.of("*"));
-
         config.setAllowCredentials(true);
-        config.setMaxAge(3600L); // Cache preflight checks for 1 hour
+        config.setMaxAge(3600L); // Cache preflight responses for 1 hour
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

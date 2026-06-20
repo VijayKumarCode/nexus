@@ -552,125 +552,132 @@ const RecoveryManager = {
    LOBBY
 ══════════════════════════════════ */
 const LobbyManager = {
-    initializeLobbySynchronization() {
-        this.clearTimers();
+    initializeLobbySynchronization: function () {
+        if (STATE.lobby.pollingIntervalId) clearInterval(STATE.lobby.pollingIntervalId);
+        if (STATE.lobby.leaderboardIntervalId) clearInterval(STATE.lobby.leaderboardIntervalId);
+
+        // Perform initial reliable loading
         this.refreshLobby();
         this.refreshLeaderboard();
-        STATE.lobby.lobbyIntervalId = setInterval(() => this.refreshLobby(), 300000);
-        STATE.lobby.leaderboardIntervalId = setInterval(() => this.refreshLeaderboard(), 300000);
+
+        // Establish long-term continuous sync fallbacks
+        STATE.lobby.pollingIntervalId = setInterval(() => this.refreshLobby(), 30000);
+        STATE.lobby.leaderboardIntervalId = setInterval(() => this.refreshLeaderboard(), 60000);
     },
 
-    clearTimers() {
-        if (STATE.lobby.lobbyIntervalId) clearInterval(STATE.lobby.lobbyIntervalId);
-        if (STATE.lobby.leaderboardIntervalId) clearInterval(STATE.lobby.leaderboardIntervalId);
-        STATE.lobby.lobbyIntervalId = null;
-        STATE.lobby.leaderboardIntervalId = null;
-    },
+    filterLobby: function () {
+        const searchInput = DomCache.get('lobby-search');
+        if (!searchInput) return;
+        const query = searchInput.value.toLowerCase().trim();
+        const list = DomCache.get('online-users-list');
+        if (!list) return;
+        const rows = list.getElementsByClassName('player-row');
 
-    filterLobby() {
-        const qInput = DomCache.get('player-search');
-        if (!qInput) return;
-        const q = qInput.value.toLowerCase();
-        const rows = DomCache.get('online-users-list').querySelectorAll('.user-item-row');
-        rows.forEach(item => {
-            const u = item.getAttribute('data-username').toLowerCase();
-            const f = (item.getAttribute('data-fullname') || '').toLowerCase();
-            item.style.display = (u.includes(q) || f.includes(q)) ? 'flex' : 'none';
-        });
-    },
-
-    async refreshLobby() {
-        if (DomCache.get('online-users-list').closest('.screen').style.display === 'none') return;
-        try {
-            const users = await ApiManager.request(`${API_BASE}/lobby`);
-            const list = DomCache.get('online-users-list');
-            const others = users.filter(u => u.username !== AuthManager.currentUser);
-
-            if (!others.length) {
-                list.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.82rem;">No other players online</div>';
-                return;
+        for (let row of rows) {
+            const username = row.getAttribute('data-username') || '';
+            if (username.toLowerCase().includes(query)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
             }
-
-            const fragment = document.createDocumentFragment();
-            others.forEach(user => {
-                const busy = user.status === 'IN_GAME';
-                const pillClass = busy ? 'status-ingame' : 'status-online';
-                const pillText = busy ? 'In Game' : 'Online';
-                const initials = user.username.slice(0, 2).toUpperCase();
-                const safeName = UIManager.sanitizeText(user.username);
-                const safeFullName = UIManager.sanitizeText(user.fullName || 'Nexus Player');
-
-                const row = document.createElement('div');
-                row.className = 'player-row user-item-row';
-                row.setAttribute('data-username', safeName);
-                row.setAttribute('data-fullname', safeFullName);
-                row.innerHTML = `
-                    <div class="player-info">
-                        <div class="player-avatar">${initials}</div>
-                        <div>
-                            <div class="player-name">${safeName}</div>
-                            <div class="player-fullname">${safeFullName}</div>
-                        </div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span class="status-pill ${pillClass}">${pillText}</span>
-                        <button class="challenge-btn" data-target="${safeName}" ${busy ? 'disabled' : ''}>Challenge</button>
-                    </div>
-                `;
-
-                const btn = row.querySelector('.challenge-btn');
-                if (btn && !busy) {
-                    btn.addEventListener('click', () => ChallengeManager.sendChallenge(safeName));
-                }
-                fragment.appendChild(row);
-            });
-
-            list.innerHTML = '';
-            list.appendChild(fragment);
-            this.filterLobby();
-        } catch (e) {
-            Logger.error('Lobby refresh failed', e);
         }
     },
 
-    async refreshLeaderboard() {
-        try {
-            const players = await ApiManager.request(`${API_BASE}/leaderboard`);
-            const list = DomCache.get('leaderboard-list');
+    refreshLobby: async function () {
+        const list = DomCache.get('online-users-list');
+        if (!list) return;
 
-            if (!players.length) {
-                list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:0.8rem;">No games played yet</div>';
+        // CRITICAL FIX: Removed brittle CSS .style.display === 'none' guard trap
+        // Data model hydration must execute safely regardless of transient UI animation frames.
+
+        try {
+            const users = await ApiManager.request(`${API_BASE}/lobby`, {method: 'GET'});
+            list.innerHTML = '';
+
+            // Exclude self cleanly using centralized STATE metrics
+            const others = users.filter(u => u.username !== STATE.auth.currentUser);
+
+            if (others.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-lobby">
+                        <i class="fas fa-user-slash"></i>
+                        <p>No other players online right now</p>
+                    </div>`;
                 return;
             }
 
-            const fragment = document.createDocumentFragment();
-            players.forEach((p, i) => {
-                const total = (p.wins || 0) + (p.losses || 0);
-                const rate = p.winRate !== undefined ? p.winRate : (total > 0 ? Math.round((p.wins / total) * 100) : 0);
-                const medal = i < 3 ? ['🥇','🥈','🥉'][i] : `#${i + 1}`;
+            others.forEach(user => {
+                const statusClass = user.status === 'ONLINE' ? 'status-online' : 'status-ingame';
+                const statusText = user.status === 'ONLINE' ? 'Available' : 'In Game';
+                const actionButton = user.status === 'ONLINE'
+                    ? `<button class="btn btn-primary btn-sm btn-challenge" onclick="window.sendChallenge('${user.username}')">
+                         <i class="fas fa-swords"></i> Challenge
+                       </button>`
+                    : `<button class="btn btn-secondary btn-sm btn-challenge" disabled>
+                         <i class="fas fa-lock"></i> Busy
+                       </button>`;
 
                 const row = document.createElement('div');
-                row.className = 'lb-row';
+                row.className = 'player-row fade-in';
+                row.setAttribute('data-username', user.username);
                 row.innerHTML = `
-                    <span class="lb-rank">${medal}</span>
-                    <span class="lb-name">${UIManager.sanitizeText(p.username)}</span>
-                    <div class="lb-stats">
-                        <span class="lb-win">${p.wins || 0}W</span>
-                        <span class="lb-loss">${p.losses || 0}L</span>
-                        <span class="lb-rate">${rate}%</span>
+                    <div class="player-info">
+                        <div class="player-avatar-wrapper">
+                            <div class="player-avatar text-avatar">${user.username.charAt(0).toUpperCase()}</div>
+                            <span class="status-indicator ${statusClass}"></span>
+                        </div>
+                        <div class="player-details">
+                            <span class="player-name">${UIManager.sanitizeText(user.username)}</span>
+                            <span class="player-status-text">${statusText}</span>
+                        </div>
+                    </div>
+                    <div class="player-actions">
+                        ${actionButton}
                     </div>
                 `;
-                fragment.appendChild(row);
+                list.appendChild(row);
             });
+        } catch (err) {
+            Logger.error('Failed to sync or refresh lobby data layout:', err);
+        }
+    },
 
+    refreshLeaderboard: async function () {
+        const list = DomCache.get('leaderboard-list');
+        if (!list) return;
+
+        try {
+            const data = await ApiManager.request(`${API_BASE}/leaderboard`, {method: 'GET'});
             list.innerHTML = '';
-            list.appendChild(fragment);
-        } catch (e) {
-            Logger.error('Leaderboard load failed', e);
+
+            if (data.length === 0) {
+                list.innerHTML = '<div class="empty-lobby"><p>No tournament records found</p></div>';
+                return;
+            }
+
+            data.forEach((entry, index) => {
+                const row = document.createElement('div');
+                row.className = 'leaderboard-row';
+                row.innerHTML = `
+                    <div class="rank-info">
+                        <span class="rank-number">${index + 1}</span>
+                        <span class="rank-name">${UIManager.sanitizeText(entry.username)}</span>
+                    </div>
+                    <div class="rank-stats">
+                        <span class="rank-wins"><i class="fas fa-trophy"></i> ${entry.wins}</span>
+                    </div>
+                `;
+                list.appendChild(row);
+            });
+        } catch (err) {
+            Logger.error('Failed to clear or pull leaderboard array snapshot:', err);
         }
     },
 
     updateSingleUserStatus(update) {
+        // FIX 3: Prevent infinite fetch loops triggered by own status broadcasts
+        if (update.username === AuthManager.currentUser) return;
+
         Logger.info('Lobby Status update', update.username, update.status);
         const list = DomCache.get('online-users-list');
         if (!list) return;
@@ -819,96 +826,69 @@ const GameManager = {
     get boardLocked() { return STATE.game.boardLocked; },
     set boardLocked(val) { STATE.game.boardLocked = val; },
 
-    setMachineState(state) {
-        Logger.info(`Machine State: ${this.machineState} -> ${state}`);
-        this.machineState = state;
+    setMachineState: function (state) {
+        STATE.game.engineState = state;
+        Logger.info(`Game machine altered boundaries to target state: ${state}`);
     },
 
-    setupGame(roomId, opponent) {
-        this.currentRoomId = roomId;
-        this.opponentUser = opponent;
-        this.setMachineState('IN_ROOM');
+    setupGame: function (roomId, opponent) {
+        this.setMachineState('PLAYING');
+        STATE.game.currentRoomId = roomId;
+        STATE.game.opponentUser = opponent;
+        STATE.game.isGameOver = false;
+        this.resetBoardState();
 
-        const parts = roomId.split('_');
-        UIManager.setRoomDisplay(parts[0], parts[1]);
-        UIManager.showScreen('game-container');
+        UIManager.setRoomDisplay(STATE.auth.currentUser, opponent);
+        UIManager.showScreen('game-screen');
+        DomCache.get('game-over-modal').style.display = 'none';
 
+        // Bind operational subscriptions dynamically
         WebSocketManager.subscribeRoom(roomId);
+    },
+
+    resetLocalFields: function () {
+        STATE.game.currentRoomId = null;
+        STATE.game.opponentUser = null;
+        STATE.game.mySign = null;
+        STATE.game.opponentSign = null;
+        STATE.game.isMyTurn = false;
+        STATE.game.isGameOver = false;
         this.resetBoardState();
     },
 
-    resetLocalFields() {
-        this.isGameOver = false;
-        this.isMyTurn = false;
-        this.mySymbol = '';
-        this.tossSubmitted = false;
-        this.tossGameStartHandled = false;
-        this.currentRoomId = '';
-        this.opponentUser = null;
-        this.boardLocked = false;
+    resetGameState: function () {
+        this.resetLocalFields();
         this.setMachineState('IDLE');
     },
 
-    resetGameState() {
-        this.isGameOver = false;
-        this.isMyTurn = false;
-        this.mySymbol = '';
-        this.tossSubmitted = false;
-        this.tossGameStartHandled = false;
-        this.boardLocked = false;
-
-        const cells = DomCache.get('cells');
-        for (let i = 0; i < cells.length; i++) {
-            cells[i].textContent = '';
-            cells[i].className = 'cell';
+    resetBoardState: function () {
+        STATE.game.board = Array(9).fill('');
+        const cells = document.getElementsByClassName('cell');
+        for (let cell of cells) {
+            cell.textContent = '';
+            cell.className = 'cell';
+            cell.style.pointerEvents = 'auto';
         }
     },
 
-    resetBoardState() {
-        this.resetGameState();
+    sendToss: function () {
+        const roomId = STATE.game.currentRoomId;
+        if (!roomId || !WebSocketManager.isConnected) return;
         this.setMachineState('TOSS_PENDING');
-
-        const parts = this.currentRoomId.split('_');
-        const amHost = parts[0] === AuthManager.currentUser;
-        const tossBtn = DomCache.get('btn-toss');
-
-        if (amHost) {
-            tossBtn.style.display = 'inline-block';
-            UIManager.setStatus('You are Host — flip the coin to begin!', 'info');
-        } else {
-            tossBtn.style.display = 'none';
-            UIManager.setStatus(`Waiting for ${this.opponentUser} to flip...`, 'warn');
-        }
+        UIManager.showModal('toss-modal');
     },
 
-    sendToss() {
-        if (this.machineState !== 'TOSS_PENDING' || !this.currentRoomId || !this.opponentUser) {
-            UIManager.showToast('Match environment not ready for toss.', 'warning');
-            return;
-        }
-        WebSocketManager.send(`/app/toss/${this.currentRoomId}`, {
-            playerOne: AuthManager.currentUser,
-            playerTwo: this.opponentUser,
-            roomId: this.currentRoomId
-        });
-        DomCache.get('btn-toss').style.display = 'none';
-        UIManager.setStatus('Flipping the coin...', 'info');
-    },
-
-    submitTossChoice(choice) {
-        if (this.tossSubmitted) return;
-        this.tossSubmitted = true;
-
-        DomCache.get('tossChoiceBtns').forEach(b => { b.disabled = true; });
-        WebSocketManager.send(`/app/toss/decision/${this.currentRoomId}`, {
-            payload: choice
-        });
+    submitTossChoice: function (choice) {
+        const roomId = STATE.game.currentRoomId;
+        if (!roomId || !WebSocketManager.isConnected) return;
+        WebSocketManager.send(`/app/toss/decision/${roomId}`, { payload: choice });
         UIManager.closeModal('toss-modal');
     },
 
-    requestRematch() {
-        if (this.machineState !== 'GAME_OVER' || !this.currentRoomId) return;
-        WebSocketManager.send(`/app/reset/${this.currentRoomId}`, {});
+    requestRematch: function () {
+        const roomId = STATE.game.currentRoomId;
+        if (!roomId || !WebSocketManager.isConnected) return;
+        WebSocketManager.send(`/app/game/rematch/${roomId}`, { payload: 'REMATCH_REQUEST' });
     },
 
     leaveGame() {
@@ -921,7 +901,8 @@ const GameManager = {
         UIManager.closeModal('challenge-modal');
 
         if (roomId && WebSocketManager.isConnected) {
-            WebSocketManager.send('/app/game.abort', {
+            // FIX 1: Correct path mismatch to match backend Controller
+            WebSocketManager.send('/app/game/abort', {
                 sender: AuthManager.currentUser,
                 roomId: roomId,
                 type: 'GAME_ABORTED'
@@ -934,116 +915,85 @@ const GameManager = {
         WebSocketManager.unsubscribeRoom();
         this.resetLocalFields();
         UIManager.showScreen('lobby-screen');
-        LobbyManager.initializeLobbySynchronization();
+
+        // FIX 2: Introduce 250ms transactional alignment delay.
+        // Gives PostgreSQL time to commit the STOMP abort before the REST query hits.
+        setTimeout(() => {
+            LobbyManager.initializeLobbySynchronization();
+        }, 250);
     },
 
-    sendMove(pos) {
-        if (this.machineState !== 'PLAYING' || this.isGameOver || !this.isMyTurn || this.boardLocked) return;
+    sendMove: function (pos) {
+        const roomId = STATE.game.currentRoomId;
+        if (!roomId || !STATE.game.isMyTurn || STATE.game.isGameOver || !WebSocketManager.isConnected) return;
+        if (STATE.game.board[pos] !== '') return;
 
-        const cells = DomCache.get('cells');
-        if (cells[pos] && cells[pos].textContent !== '') return;
-
-        this.boardLocked = true;
-        WebSocketManager.send(`/app/move/${this.currentRoomId}`, {
-            playerUsername: AuthManager.currentUser,
-            boardPosition: pos,
-            roomId: this.currentRoomId,
-            symbol: this.mySymbol
-        });
-        this.isMyTurn = false;
-        UIManager.setStatus(`Waiting for ${this.opponentUser}...`, 'warn');
+        WebSocketManager.send(`/app/game.move/${roomId}`, { boardPosition: pos });
     },
 
-    handleRoomMessage(payload) {
-        if (!WebSocketManager.validatePayload(payload)) return;
+    handleRoomMessage: function (payload) {
+        if (!payload || !payload.type) return;
 
-        if (payload.type === 'GAME_ABORTED') {
-            if (payload.sender === AuthManager.currentUser) return;
-            UIManager.showToast(`${payload.sender} left the match.`, 'warning');
-            this.cleanupGameState();
-            return;
-        }
-
-        if (payload.type === 'GAME_RESET') {
-            UIManager.closeModal('game-over-modal');
-            UIManager.closeModal('toss-modal');
-            DomCache.get('toss-winner-section').style.display = 'none';
-            DomCache.get('toss-loser-section').style.display = 'none';
-            DomCache.get('tossChoiceBtns').forEach(b => { b.disabled = false; });
-            this.resetBoardState();
-            return;
-        }
-
-        if (payload.type === 'TOSS') {
-            this.setMachineState('TOSS_RESULT');
-            DomCache.get('btn-toss').style.display = 'none';
-            UIManager.showModal('toss-modal');
-
-            if (payload.payload === AuthManager.currentUser) {
-                DomCache.get('toss-modal-card').style.borderColor = 'rgba(0,212,255,0.3)';
-                DomCache.get('toss-result-title').textContent = 'You Won the Toss!';
-                DomCache.get('toss-result-title').className = 'modal-title text-cyan';
-                DomCache.get('toss-result-desc').textContent = 'Pick your symbol to enter the arena:';
-                DomCache.get('toss-winner-section').style.display = 'block';
-                DomCache.get('toss-loser-section').style.display = 'none';
-                UIManager.setStatus('You won the toss! Choose your symbol.', 'success');
-            } else {
-                DomCache.get('toss-modal-card').style.borderColor = 'rgba(255,201,64,0.25)';
-                DomCache.get('toss-result-title').textContent = `${payload.payload} Won`;
-                DomCache.get('toss-result-title').className = 'modal-title text-gold';
-                DomCache.get('toss-result-desc').textContent = 'Your opponent is choosing their symbol...';
-                DomCache.get('toss-winner-section').style.display = 'none';
-                DomCache.get('toss-loser-section').style.display = 'block';
-                DomCache.get('toss-waiting-text').textContent = `Waiting for ${payload.payload} to choose...`;
-                UIManager.setStatus(`${payload.payload} won the toss. Waiting...`, 'warn');
-            }
-            return;
-        }
-
-        if (payload.type === 'TOSS_RESULT') {
-            this.setMachineState('PLAYING');
-            UIManager.closeModal('toss-modal');
-            DomCache.get('btn-toss').style.display = 'none';
-
-            const firstPlayer = payload.payload;
-            if (firstPlayer === AuthManager.currentUser) {
-                this.isMyTurn = true;
-                this.mySymbol = 'X';
-                UIManager.setStatus('Your turn! Make a move.', 'success');
-            } else {
-                this.isMyTurn = false;
-                this.mySymbol = 'O';
-                UIManager.setStatus(`${this.opponentUser}'s turn...`, 'warn');
-            }
-
-            this.tossGameStartHandled = true;
-            this.boardLocked = false;
-            return;
-        }
-
-        if (payload.boardPosition !== undefined && payload.boardPosition !== null) {
-            const pos = parseInt(payload.boardPosition, 10);
-            const cells = DomCache.get('cells');
-
-            if (cells[pos] && cells[pos].textContent === '') {
-                cells[pos].textContent = payload.symbol;
-                cells[pos].classList.add(payload.symbol === 'X' ? 'x-mark' : 'o-mark');
-                this.boardLocked = false;
-
-                if (payload.gameState && payload.gameState !== 'ONGOING') {
-                    this.isGameOver = true;
-                    this.setMachineState('GAME_OVER');
-                    this.showWinnerModal(payload.gameState);
-                } else if (payload.playerUsername !== AuthManager.currentUser) {
-                    this.isMyTurn = true;
-                    UIManager.setStatus('Your turn!', 'success');
+        switch (payload.type) {
+            case 'TOSS_RESULT':
+                UIManager.closeModal('toss-modal');
+                if (payload.payload === STATE.auth.currentUser) {
+                    STATE.game.mySign = 'X';
+                    STATE.game.opponentSign = 'O';
+                    STATE.game.isMyTurn = true;
+                    UIManager.showToast('You won the toss! You are X (First)', 'success');
                 } else {
-                    UIManager.setStatus(`Waiting for ${this.opponentUser}...`, 'warn');
+                    STATE.game.mySign = 'O';
+                    STATE.game.opponentSign = 'X';
+                    STATE.game.isMyTurn = false;
+                    UIManager.showToast(`${STATE.game.opponentUser} won the toss. You are O`, 'info');
                 }
-            }
+                this.updateTurnDisplay();
+                break;
+
+            case 'MOVE_UPDATE':
+                const movePos = payload.boardPosition;
+                const player = payload.sender;
+                const symbol = (player === STATE.auth.currentUser) ? STATE.game.mySign : STATE.game.opponentSign;
+
+                STATE.game.board[movePos] = symbol;
+                const cell = document.querySelector(`.cell[onclick="window.sendMove(${movePos})"]`);
+                if (cell) {
+                    cell.textContent = symbol;
+                    cell.classList.add(symbol.toLowerCase() === 'x' ? 'x-mark' : 'o-mark');
+                    cell.style.pointerEvents = 'none';
+                }
+
+                if (!STATE.game.isGameOver) {
+                    STATE.game.isMyTurn = (player !== STATE.auth.currentUser);
+                    this.updateTurnDisplay();
+                }
+                break;
+
+            case 'GAME_OVER':
+                STATE.game.isGameOver = true;
+                this.setMachineState('GAME_OVER');
+                UIManager.showWinnerModal(payload.payload);
+                break;
+
+            case 'GAME_ABORTED':
+                STATE.game.isGameOver = true;
+                UIManager.showToast('Opponent left or aborted the match context.', 'warning');
+                this.cleanupGameState();
+                break;
+
+            case 'REMATCH_OFFER':
+                if (payload.sender !== STATE.auth.currentUser) {
+                    UIManager.showToast(`${STATE.game.opponentUser} requested a rematch! Click Rematch to accept.`, 'info');
+                }
+                break;
+
+            case 'REMATCH_ACCEPTED':
+                UIManager.showToast('Rematch started!', 'success');
+                this.setupGame(STATE.game.currentRoomId, STATE.game.opponentUser);
+                break;
         }
     },
-
     showWinnerModal(state) {
         const title = DomCache.get('go-title');
         const icon = DomCache.get('go-icon');
@@ -1065,6 +1015,16 @@ const GameManager = {
                 : 'Better luck next round. Keep fighting.';
         }
         UIManager.showModal('game-over-modal');
+    },
+
+    updateTurnDisplay: function () {
+        const turnIndicator = document.getElementById('turn-indicator');
+        if (!turnIndicator) return;
+        if (STATE.game.isMyTurn) {
+            turnIndicator.innerHTML = `<span class="badge bg-success animate-pulse">Your Turn (${STATE.game.mySign})</span>`;
+        } else {
+            turnIndicator.innerHTML = `<span class="badge bg-secondary">Opponent's Turn (${STATE.game.opponentSign})</span>`;
+        }
     }
 };
 

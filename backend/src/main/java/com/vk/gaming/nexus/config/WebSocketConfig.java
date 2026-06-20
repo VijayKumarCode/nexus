@@ -15,6 +15,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.socket.config.annotation.*;
+import java.security.Principal;
+
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -39,10 +41,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        String endpoint = "/game-websocket";
-
-        registry.addEndpoint(endpoint)
-                .setAllowedOriginPatterns("*") // Allows secure cloud environment fallback matching
+        registry.addEndpoint("/game-websocket")
+                .setAllowedOriginPatterns("*")
                 .withSockJS();
     }
 
@@ -52,9 +52,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             @Override
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
-                if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    String authHeader = accessor.getFirstNativeHeader("Authorization");
-                    if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                if (accessor != null) {
+                    if (StompCommand.CONNECT.equals(accessor.getCommand())) {
+                        String authHeader = accessor.getFirstNativeHeader("Authorization");
+                        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                            log.warn("WebSocket CONNECT: missing or invalid Authorization header");
+                            throw new org.springframework.messaging.MessagingException("Missing or invalid Authorization header");
+                        }
                         String jwt = authHeader.substring(7);
                         try {
                             String username = jwtService.extractUsername(jwt);
@@ -66,14 +70,44 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                                     accessor.setUser(authToken);
                                     log.debug("WebSocket CONNECT authenticated for user: {}", username);
                                 } else {
-                                    log.warn("WebSocket CONNECT: invalid token or disabled user: {}", username);
+                                    log.warn("WebSocket CONNECT: token invalid or user disabled: {}", username);
+                                    throw new org.springframework.messaging.MessagingException("Invalid token or disabled user");
                                 }
+                            } else {
+                                throw new org.springframework.messaging.MessagingException("Invalid token payload");
                             }
                         } catch (Exception e) {
                             log.warn("WebSocket CONNECT: JWT validation failed: {}", e.getMessage());
+                            throw new org.springframework.messaging.MessagingException("Authentication failed: " + e.getMessage());
                         }
-                    } else {
-                        log.debug("WebSocket CONNECT: no Authorization header provided");
+                    } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
+                        Principal principal = accessor.getUser();
+                        if (principal == null) {
+                            log.warn("WebSocket SUBSCRIBE attempt without authentication");
+                            throw new org.springframework.messaging.MessagingException("Unauthorized subscription attempt");
+                        }
+                        String username = principal.getName();
+                        String destination = accessor.getDestination();
+                        if (destination != null) {
+                            if (destination.startsWith("/topic/challenges/")) {
+                                String pathUser = destination.substring("/topic/challenges/".length());
+                                if (!username.equals(pathUser)) {
+                                    log.warn("User {} attempted unauthorized subscription to {}", username, destination);
+                                    throw new org.springframework.messaging.MessagingException("Forbidden: cannot subscribe to other user's challenges");
+                                }
+                            } else if (destination.startsWith("/topic/game/")) {
+                                String roomId = destination.substring("/topic/game/".length());
+                                String[] players = roomId.split("_");
+                                if (players.length >= 2) {
+                                    if (!username.equals(players[0]) && !username.equals(players[1])) {
+                                        log.warn("User {} attempted unauthorized subscription to room {}", username, roomId);
+                                        throw new org.springframework.messaging.MessagingException("Forbidden: not a participant of this game room");
+                                    }
+                                } else {
+                                    throw new org.springframework.messaging.MessagingException("Invalid game room ID");
+                                }
+                            }
+                        }
                     }
                 }
                 return message;

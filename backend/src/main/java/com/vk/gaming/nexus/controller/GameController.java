@@ -136,8 +136,11 @@ public class GameController {
 
     @MessageMapping("/game/abort")
     public void handleAbort(@Payload ChallengeMessage message, Principal principal) {
-
         String username = principal.getName();
+        if (!gameService.isRoomParticipant(message.getRoomId(), username)) {
+            log.warn("Unauthorized game abort attempt by {} in room {}", username, message.getRoomId());
+            return;
+        }
 
         log.info("========== GAME ABORT ==========");
         log.info("room={}", message.getRoomId());
@@ -161,9 +164,10 @@ public class GameController {
         log.info("room split={}", java.util.Arrays.toString(parts));
 
         if (parts.length >= 2) {
+            log.info("Broadcasting and Persisting ONLINE status for {} and {}", parts[0], parts[1]);
 
-            log.info("Broadcasting ONLINE for {}", parts[0]);
-            log.info("Broadcasting ONLINE for {}", parts[1]);
+            gameService.resetUser(parts[0]);
+            gameService.resetUser(parts[1]);
 
             messagingTemplate.convertAndSend(
                     "/topic/lobby.status",
@@ -179,10 +183,10 @@ public class GameController {
         log.info("========== END ABORT ==========");
     }
 
-    @MessageMapping("/toss/decision/{roomId}")
-    public void handleTossDecision(@DestinationVariable String roomId,
-                                   @Payload GameSystemMessage msg,
+    @MessageMapping("/toss/decision")
+    public void handleTossDecision(@Payload GameSystemMessage msg,
                                    Principal principal) {
+        String roomId = msg.getMessage(); // Extracting room context via continuous message payload field mapping
         if (!gameService.isRoomParticipant(roomId, principal.getName())) {
             log.warn("Unauthorized toss decision by {} in room {}", principal.getName(), roomId);
             return;

@@ -63,4 +63,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Transactional
     @Query("UPDATE User u SET u.losses = u.losses + 1 WHERE u.username = :username")
     int incrementLosses(@Param("username") String username);
+
+    @Query("SELECT u FROM User u WHERE u.status IN (:status1, :status2)")
+    List<User> findActiveLobbyUsers(@Param("status1") UserStatus status1, @Param("status2") UserStatus status2);
 }

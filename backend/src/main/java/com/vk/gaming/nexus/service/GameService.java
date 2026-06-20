@@ -262,6 +262,7 @@ public class GameService {
         playerX.remove(roomId);
         playerO.remove(roomId);
         tossWinner.remove(roomId);
+        roomPlayers.remove(roomId);
 
         log.info("Game reset — room={}", roomId);
     }
@@ -300,7 +301,7 @@ public class GameService {
         }
     }
 
-    private void resetUser(String username) {
+    public void resetUser(String username) {
         userRepository.findByUsername(username).ifPresent(u -> {
             u.setStatus(UserStatus.ONLINE);
             u.setLastSeen(System.currentTimeMillis());

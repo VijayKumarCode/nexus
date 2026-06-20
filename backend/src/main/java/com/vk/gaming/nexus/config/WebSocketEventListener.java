@@ -26,6 +26,8 @@ public class WebSocketEventListener {
     private final ChallengeService challengeService;
     private final GameService gameService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final com.vk.gaming.nexus.repository.UserRepository userRepository;
+    private final com.vk.gaming.nexus.repository.ChallengeRepository challengeRepository;
 
     @EventListener
     public void handleConnect(SessionConnectedEvent event) {
@@ -62,8 +64,12 @@ public class WebSocketEventListener {
         String username = val.toString();
         log.info("User disconnected: {}", username);
         try {
-            userService.logoutUser(username);
-            challengeService.cancelStaleChallenges(username);
+            userRepository.findByUsername(username).ifPresent(u -> {
+                u.setStatus(UserStatus.OFFLINE);
+                u.setLastSeen(System.currentTimeMillis());
+                userRepository.save(u);
+            });
+            challengeRepository.cancelAllPendingForUser(username, com.vk.gaming.nexus.enums.ChallengeStatus.CANCELLED, com.vk.gaming.nexus.enums.ChallengeStatus.PENDING);
             gameService.handlePlayerDisconnect(username);
             messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, UserStatus.OFFLINE));
         } catch (Exception e) {

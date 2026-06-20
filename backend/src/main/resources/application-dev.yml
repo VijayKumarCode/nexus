@@ -6,25 +6,22 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/nexus_db
     username: postgres
-    password: ${DEV_DB_PASSWORD:postgres}
+    password: ${DEV_DB_PASSWORD}  # Sourced securely from your untracked local .env
     driver-class-name: org.postgresql.Driver
 
   jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: true
     hibernate:
       ddl-auto: update
-    show-sql: true
     properties:
       hibernate:
         format_sql: true
 
-# Enable Flyway locally if you want migrations applied automatically
-# flyway:
-#   enabled: true
-#   baseline-on-migrate: true
-
 app:
   base-url: http://localhost:8080
-  resend-api-key: ${RESEND_API_KEY:}
+  resend-api-key: ${RESEND_API_KEY} # Sourced securely from your untracked local .env
+  mail-from: ${MAIL_FROM:onboarding@resend.dev}
 
 server:
   port: ${PORT:8080}

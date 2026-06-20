@@ -7,6 +7,7 @@ import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.exceptions.EmailAlreadyRegisteredException;
 import com.vk.gaming.nexus.exceptions.UsernameTakenException;
+import com.vk.gaming.nexus.repository.GameMoveRepository;
 import com.vk.gaming.nexus.repository.UserRepository;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
+    private final GameMoveRepository gameMoveRepository;
 
     @Value("${presence.idle-threshold-ms:120000}")
     private long idleThresholdMs;
@@ -147,7 +149,7 @@ public class UserService {
     }
 
     public List<User> getOnlineUsers() {
-        return userRepository.findByStatus(UserStatus.ONLINE);
+        return userRepository.findActiveLobbyUsers(UserStatus.ONLINE, UserStatus.IN_GAME);
     }
 
     public List<LeaderboardEntryDto> getTopPlayers(int limit) {

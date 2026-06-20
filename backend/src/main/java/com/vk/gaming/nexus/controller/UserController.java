@@ -107,12 +107,12 @@ public class UserController {
      * Users can only log themselves out.
      */
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(Authentication authentication) {
-        String username = authentication.getName();
-        userService.logoutUser(username);
-        return ResponseEntity.ok(Map.of("message", username + " logged out"));
+    public ResponseEntity<Void> logout(Authentication authentication) {
+        if (authentication != null && authentication.getName() != null) {
+            userService.logoutUser(authentication.getName());
+        }
+        return ResponseEntity.ok().build();
     }
-
     /**
      * SECURE: Uses Authentication principal to prevent spoofing.
      */

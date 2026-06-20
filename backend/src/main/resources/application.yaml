@@ -4,9 +4,11 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
-  # Optional: import dotenv from backend/.env for local dev convenience
+  # Checks both paths so it works whether running from root or inside /backend
   config:
-    import: optional:dotenv:backend/.env
+    import:
+      - optional:dotenv:.env
+      - optional:dotenv:backend/.env
 
   jpa:
     open-in-view: false
@@ -15,11 +17,10 @@ server:
   port: ${PORT:8080}
 
 app:
-  mail:
-    from: ${MAIL_FROM:onboarding@resend.dev}
+  mail-from: ${MAIL_FROM:onboarding@resend.dev}
   base-url: ${APP_BASE:http://localhost:8080}
-  resend-api-key: ${RESEND_API_KEY:}
-  jwt-secret: ${MXfmke16C+cDZ92613eAstqpIpmT7FZo73B3ALB1JVzc59z8mEmQXvQoaFbock+UEgsxMmw2JGfLL3bEZYljJw==}
+  resend-api-key: ${RESEND_API_KEY}
+  jwt-secret: ${JWT_SECRET}
   jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
 
 cors:

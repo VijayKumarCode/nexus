@@ -9,10 +9,6 @@
 /* ══════════════════════════════════
    CONFIG
 ══════════════════════════════════ */
-const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:8080'
-    : 'https://nexus-yxa3.onrender.com';
-
 const BACKEND_URL = CONFIG.API_BASE_URL;
 const API_BASE = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.REGISTER.replace('/register', '')}`; // Points to /api/users
 const RECOVERY_BASE = `${CONFIG.API_BASE_URL}/api/recovery`;
@@ -642,12 +638,12 @@ const LobbyManager = {
 
             others.forEach(user => {
                 const statusClass = user.status === 'ONLINE' ? 'status-online' : 'status-ingame';
-                const statusText = user.status === 'ONLINE' ? 'Available' : 'In Game';
+                const statusText = user.status === 'ONLINE' ? 'Online' : 'In Game';
                 const actionButton = user.status === 'ONLINE'
-                    ? `<button class="btn btn-primary btn-sm btn-challenge" onclick="window.sendChallenge('${user.username}')">
+                    ? `<button class="challenge-btn" onclick="window.sendChallenge('${user.username}')">
                          <i class="fas fa-swords"></i> Challenge
                        </button>`
-                    : `<button class="btn btn-secondary btn-sm btn-challenge" disabled>
+                    : `<button class="challenge-btn" disabled>
                          <i class="fas fa-lock"></i> Busy
                        </button>`;
 
@@ -658,11 +654,10 @@ const LobbyManager = {
                     <div class="player-info">
                         <div class="player-avatar-wrapper">
                             <div class="player-avatar text-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                            <span class="status-indicator ${statusClass}"></span>
                         </div>
-                        <div class="player-details">
+                        <div class="player-details" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
                             <span class="player-name">${UIManager.sanitizeText(user.username)}</span>
-                            <span class="player-status-text">${statusText}</span>
+                            <span class="status-pill ${statusClass}">${statusText}</span>
                         </div>
                     </div>
                     <div class="player-actions">
@@ -735,10 +730,12 @@ const LobbyManager = {
             pill.className = 'status-pill status-ingame';
             pill.textContent = 'In Game';
             btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-lock"></i> Busy`;
         } else if (update.status === 'ONLINE') {
             pill.className = 'status-pill status-online';
             pill.textContent = 'Online';
             btn.disabled = false;
+            btn.innerHTML = `<i class="fas fa-swords"></i> Challenge`;
         }
     }
 };
@@ -851,8 +848,8 @@ const GameManager = {
     set isMyTurn(val) { STATE.game.isMyTurn = val; },
     get isGameOver() { return STATE.game.isGameOver; },
     set isGameOver(val) { STATE.game.isGameOver = val; },
-    get mySymbol() { return STATE.game.mySymbol; },
-    set mySymbol(val) { STATE.game.mySymbol = val; },
+    get mySymbol() { return STATE.game.mySign; },
+    set mySymbol(val) { STATE.game.mySign = val; },
     get tossSubmitted() { return STATE.game.tossSubmitted; },
     set tossSubmitted(val) { STATE.game.tossSubmitted = val; },
     get tossGameStartHandled() { return STATE.game.tossGameStartHandled; },
@@ -861,6 +858,7 @@ const GameManager = {
     set boardLocked(val) { STATE.game.boardLocked = val; },
 
     setMachineState: function (state) {
+        STATE.game.machineState = state;
         STATE.game.engineState = state;
         Logger.info(`Game machine altered boundaries to target state: ${state}`);
     },
@@ -878,6 +876,14 @@ const GameManager = {
 
         // Bind operational subscriptions dynamically
         WebSocketManager.subscribeRoom(roomId);
+
+        // Auto-toss initiation: the player with alphabetically lower username initiates
+        if (STATE.auth.currentUser < opponent) {
+            Logger.info(`Auto-initiating coin toss for room ${roomId}`);
+            setTimeout(() => {
+                WebSocketManager.send(`/app/toss/${roomId}`);
+            }, 500);
+        }
     },
 
     resetLocalFields: function () {
@@ -915,7 +921,7 @@ const GameManager = {
     submitTossChoice: function (choice) {
         const roomId = STATE.game.currentRoomId;
         if (!roomId || !WebSocketManager.isConnected) return;
-        WebSocketManager.send(`/app/toss/decision/${roomId}`, { payload: choice });
+        WebSocketManager.send('/app/toss/decision', { message: roomId, payload: choice });
         UIManager.closeModal('toss-modal');
     },
 
@@ -962,13 +968,28 @@ const GameManager = {
         if (!roomId || !STATE.game.isMyTurn || STATE.game.isGameOver || !WebSocketManager.isConnected) return;
         if (STATE.game.board[pos] !== '') return;
 
-        WebSocketManager.send(`/app/game.move/${roomId}`, { boardPosition: pos });
+        WebSocketManager.send(`/app/move/${roomId}`, { boardPosition: pos });
     },
 
     handleRoomMessage: function (payload) {
         if (!payload || !payload.type) return;
 
         switch (payload.type) {
+            case 'TOSS':
+                UIManager.showModal('toss-modal');
+                if (payload.winner === STATE.auth.currentUser) {
+                    DomCache.get('toss-result-title').textContent = 'You Won the Toss! 🎉';
+                    DomCache.get('toss-result-desc').textContent = 'Pick your side to begin the match.';
+                    DomCache.get('toss-winner-section').style.display = 'block';
+                    DomCache.get('toss-loser-section').style.display = 'none';
+                } else {
+                    DomCache.get('toss-result-title').textContent = `${payload.winner} Won the Toss`;
+                    DomCache.get('toss-result-desc').textContent = 'Waiting for them to select X or O.';
+                    DomCache.get('toss-winner-section').style.display = 'none';
+                    DomCache.get('toss-loser-section').style.display = 'block';
+                }
+                break;
+
             case 'TOSS_RESULT':
                 UIManager.closeModal('toss-modal');
                 if (payload.payload === STATE.auth.currentUser) {
@@ -991,7 +1012,7 @@ const GameManager = {
                 const symbol = (player === STATE.auth.currentUser) ? STATE.game.mySign : STATE.game.opponentSign;
 
                 STATE.game.board[movePos] = symbol;
-                const cell = document.querySelector(`.cell[onclick="window.sendMove(${movePos})"]`);
+                const cell = DomCache.get('cells')[movePos];
                 if (cell) {
                     cell.textContent = symbol;
                     cell.classList.add(symbol.toLowerCase() === 'x' ? 'x-mark' : 'o-mark');

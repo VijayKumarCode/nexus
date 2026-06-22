@@ -99,6 +99,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                                     UsernamePasswordAuthenticationToken authToken =
                                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                                     accessor.setUser(authToken);
+                                    if (accessor.getSessionAttributes() != null) {
+                                        accessor.getSessionAttributes().put("username", username);
+                                    }
                                     log.debug("WebSocket CONNECT authenticated for user: {}", username);
                                 } else {
                                     log.warn("WebSocket CONNECT: token invalid or user disabled: {}", username);

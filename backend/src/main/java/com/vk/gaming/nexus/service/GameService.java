@@ -33,6 +33,7 @@ public class GameService {
     private final Map<String, String> playerX = new ConcurrentHashMap<>();
     private final Map<String, String> playerO = new ConcurrentHashMap<>();
     private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> rematchRequests = new ConcurrentHashMap<>();
 
     public boolean isRoomParticipant(String roomId,
                                      String username) {
@@ -348,6 +349,39 @@ public class GameService {
                 }
             }
             resetGame(roomId);
+        }
+    }
+
+    public GameSystemMessage processRematch(String roomId, String username) {
+        Set<String> requests = rematchRequests.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet());
+        requests.add(username);
+
+        String[] players = roomPlayers.get(roomId);
+        if (players == null) {
+            recoverGameStateFromDB(roomId);
+            players = roomPlayers.get(roomId);
+            if (players == null) {
+                log.error("Room players missing for room {} during rematch", roomId);
+                return null;
+            }
+        }
+
+        if (requests.size() >= 2) {
+            rematchRequests.remove(roomId);
+            resetGame(roomId);
+            registerRoom(roomId, players[0], players[1]);
+
+            GameSystemMessage msg = new GameSystemMessage();
+            msg.setType("REMATCH_ACCEPTED");
+            msg.setMessage("Rematch started! Play again.");
+            msg.setSender(username);
+            return msg;
+        } else {
+            GameSystemMessage msg = new GameSystemMessage();
+            msg.setType("REMATCH_OFFER");
+            msg.setSender(username);
+            msg.setMessage(username + " wants a rematch!");
+            return msg;
         }
     }
 }

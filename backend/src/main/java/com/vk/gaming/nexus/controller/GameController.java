@@ -134,6 +134,20 @@ public class GameController {
         messagingTemplate.convertAndSend("/topic/game/" + roomId, reset);
     }
 
+    @MessageMapping("/game/rematch/{roomId}")
+    public void handleRematch(@DestinationVariable String roomId, Principal principal) {
+        String username = principal.getName();
+        if (!gameService.isRoomParticipant(roomId, username)) {
+            log.warn("Unauthorized rematch attempt by {} in room {}", username, roomId);
+            return;
+        }
+        log.info("Rematch request — room={} player={}", roomId, username);
+        GameSystemMessage response = gameService.processRematch(roomId, username);
+        if (response != null) {
+            messagingTemplate.convertAndSend("/topic/game/" + roomId, response);
+        }
+    }
+
     @MessageMapping("/game/abort")
     public void handleAbort(@Payload ChallengeMessage message, Principal principal) {
         String username = principal.getName();

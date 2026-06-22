@@ -7,3 +7,5 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+app:
+  jwt-secret: "test_secure_environment_signing_key_must_be_long_and_robust_32_bytes_minimum"

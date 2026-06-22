@@ -69,7 +69,7 @@ public class WebSocketEventListener {
                 u.setLastSeen(System.currentTimeMillis());
                 userRepository.save(u);
             });
-            challengeRepository.cancelAllPendingForUser(username, com.vk.gaming.nexus.enums.ChallengeStatus.CANCELLED, com.vk.gaming.nexus.enums.ChallengeStatus.PENDING);
+            challengeService.cancelStaleChallenges(username);
             gameService.handlePlayerDisconnect(username);
             messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(username, UserStatus.OFFLINE));
         } catch (Exception e) {

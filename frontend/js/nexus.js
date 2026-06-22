@@ -13,9 +13,11 @@ const BACKEND_URL = (window.location.hostname === 'localhost' || window.location
     ? 'http://localhost:8080'
     : 'https://nexus-yxa3.onrender.com';
 
-const API_BASE = `${BACKEND_URL}/api/users`;
-const RECOVERY_BASE = `${BACKEND_URL}/api/recovery`;
-const WS_ENDPOINT = `${BACKEND_URL}/game-websocket`;
+const BACKEND_URL = CONFIG.API_BASE_URL;
+const API_BASE = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.REGISTER.replace('/register', '')}`; // Points to /api/users
+const RECOVERY_BASE = `${CONFIG.API_BASE_URL}/api/recovery`;
+const WS_ENDPOINT = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.WS_GAME}`; // Resolves dynamically to /game-websocket
+
 
 /* ══════════════════════════════════
    STATE
@@ -111,13 +113,27 @@ const Logger = {
 };
 
 const StorageManager = {
-    getToken() { return localStorage.getItem(STATE.auth.tokenKey); },
-    setToken(val) { localStorage.setItem(STATE.auth.tokenKey, val); },
-    removeToken() { localStorage.removeItem(STATE.auth.tokenKey); },
-    getUser() { return localStorage.getItem(STATE.auth.userKey); },
-    setUser(val) { localStorage.setItem(STATE.auth.userKey, val); },
-    removeUser() { localStorage.removeItem(STATE.auth.userKey); },
-    clearAll() { this.removeToken(); this.removeUser(); }
+    getToken() {
+                return localStorage.getItem(CONFIG.STORAGE.TOKEN_KEY);
+            },
+    setToken(val) {
+            localStorage.setItem(CONFIG.STORAGE.TOKEN_KEY, val);
+        },
+    removeToken() {
+            localStorage.removeItem(CONFIG.STORAGE.TOKEN_KEY);
+        },
+    getUser() {
+            return localStorage.getItem(CONFIG.STORAGE.USER_DATA_KEY);
+        },
+    setUser(val) {
+            localStorage.setItem(CONFIG.STORAGE.USER_DATA_KEY, val);
+        },
+    removeUser() {
+            localStorage.removeItem(CONFIG.STORAGE.USER_DATA_KEY);
+        },
+    clearAll() {
+        this.removeToken(); this.removeUser();
+    }
 };
 
 const VALIDATORS = {
@@ -1071,8 +1087,11 @@ const WebSocketManager = {
             this.disconnect();
         }
 
-        const socket = new SockJS(WS_ENDPOINT);
-        this.stompClient = Stomp.over(socket);
+        const socketTarget = `${CONFIG.WS_HANDSHAKE_URL}${CONFIG.ENDPOINTS.WS_GAME}`;
+        Logger.info(`Initiating secure SockJS negotiation channel with endpoint: ${socketTarget}`);
+
+        const socket = new SockJS(socketTarget);
+        STATE.websocket.stompClient = Stomp.over(socket);
         this.stompClient.debug = null;
 
         const token = StorageManager.getToken();

@@ -1,6 +1,7 @@
 package com.vk.gaming.nexus.config;
 
 import com.vk.gaming.nexus.service.JwtService;
+import jakarta.annotation.Nonnull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +19,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.socket.config.annotation.*;
 import java.security.Principal;
+import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -45,10 +48,23 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     @Override
-    public void registerStompEndpoints(StompEndpointRegistry registry) {
+    public void registerStompEndpoints(@Nonnull StompEndpointRegistry registry) {
+        List<String> origins = appProperties.getAllowedOrigins();
+        String[] allowedPatterns;
+
+        if (origins == null || origins.isEmpty()) {
+            log.warn("CRITICAL SECURITY WARNING: 'app.allowed-origins' is empty or unconfigured. Falling back to safe localized sandbox environments.");
+            // Protects production from accidental open access while allowing seamless local debugging
+            allowedPatterns = new String[]{"http://localhost:8080", "http://127.0.0.1:5500", "http://localhost:3000"};
+        } else {
+            allowedPatterns = origins.toArray(new String[0]);
+        }
+
         registry.addEndpoint("/game-websocket")
-                .setAllowedOriginPatterns("*")
-                .withSockJS();
+                .setAllowedOriginPatterns(allowedPatterns) // Prevents wildcards (*) while remaining flexible across browser mutations
+                .withSockJS(); // Preserves SockJS HTTP frame streaming structures
+
+        log.info("Nexus WebSocket Engine initialized successfully. Stomp connection handshakes bound to origins: {}", Arrays.toString(allowedPatterns));
     }
 
     // ─── BEAN DEFINITION FOR WEB-SOCKET HEARTBEATS ───

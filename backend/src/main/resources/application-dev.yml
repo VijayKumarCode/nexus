@@ -18,13 +18,19 @@ spring:
       hibernate:
         format_sql: true
 
-app:
-  base-url: http://localhost:8080
-  resend-api-key: ${RESEND_API_KEY} # Sourced securely from your untracked local .env
-  mail-from: ${MAIL_FROM:onboarding@resend.dev}
-
 server:
   port: ${PORT:8080}
+
+app:
+  base-url: "http://localhost:8080"
+  mail-from: "no-reply@dev.nexus.local"
+  jwt-secret: "dev_secure_environment_signing_key_must_be_long_and_robust_32_bytes_minimum"
+  jwt-expiration-ms: 86400000 # 24 Hours
+  allowed-origins:
+    - "http://localhost:8080"
+    - "http://127.0.0.1:5500" # Local Live Server extension testing port
+    - "http://localhost:3000"
+
 
 cors:
   allowed-origins:

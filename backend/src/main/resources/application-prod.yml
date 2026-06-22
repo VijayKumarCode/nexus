@@ -16,19 +16,17 @@ spring:
     show-sql: false
 
 server:
-  port: ${PORT:8080}
+  port: ${PORT:10000}
 
 app:
   base-url: ${APP_BASE}
-  mail-from: ${MAIL_FROM:noreply@nexusgame.space}
+  mail-from: ${MAIL_FROM}
   jwt-secret: ${JWT_SECRET}
   jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
   resend-api-key: ${RESEND_API_KEY}
-  allowed-origins:
-    - "https://nexus-yxa3.onrender.com"
-    - "https://vijaykumarcode.space" # Binds your personal production site securely to the backend arena
 
-cors:
   allowed-origins:
-    - https://nexusgame.space
-    - https://www.nexusgame.space
+      - "https://nexus-yxa3.onrender.com"
+      - "https://vijaykumarcode.space"
+      - "https://nexusgame.space"
+      - "https://www.nexusgame.space"

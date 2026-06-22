@@ -572,6 +572,17 @@ const LobbyManager = {
         STATE.lobby.leaderboardIntervalId = setInterval(() => this.refreshLeaderboard(), 60000);
     },
 
+    clearTimers: function () {
+        if (STATE.lobby.pollingIntervalId) {
+            clearInterval(STATE.lobby.pollingIntervalId);
+            STATE.lobby.pollingIntervalId = null;
+        }
+        if (STATE.lobby.leaderboardIntervalId) {
+            clearInterval(STATE.lobby.leaderboardIntervalId);
+            STATE.lobby.leaderboardIntervalId = null;
+        }
+    },
+
     filterLobby: function () {
         const searchInput = DomCache.get('lobby-search');
         if (!searchInput) return;
@@ -1231,6 +1242,7 @@ window.showRecovery = (mode) => RecoveryManager.showRecovery(mode);
 window.sendRecoveryOtp = () => RecoveryManager.sendRecoveryOtp();
 window.handleRecoverySubmit = () => RecoveryManager.handleRecoverySubmit();
 window.filterLobby = () => LobbyManager.filterLobby();
+window.sendChallenge = (targetUser) => ChallengeManager.sendChallenge(targetUser);
 window.acceptChallenge = () => ChallengeManager.acceptChallenge();
 window.declineChallenge = () => ChallengeManager.declineChallenge();
 window.requestRematch = () => GameManager.requestRematch();

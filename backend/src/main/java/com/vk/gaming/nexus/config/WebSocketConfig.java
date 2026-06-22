@@ -2,6 +2,7 @@ package com.vk.gaming.nexus.config;
 
 import com.vk.gaming.nexus.service.JwtService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -11,12 +12,12 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.web.socket.config.annotation.*;
 import java.security.Principal;
-
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -35,7 +36,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        config.enableSimpleBroker("/topic");
+        // ─── FIX 3: CONFIGURE DEDICATED HEARTBEAT TASK SCHEDULER ───
+        config.enableSimpleBroker("/topic")
+                .setHeartbeatValue(new long[]{10000, 10000}) // Ping every 10s, expect pong every 10s
+                .setTaskScheduler(heartbeatScheduler());
+
         config.setApplicationDestinationPrefixes("/app");
     }
 
@@ -44,6 +49,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.addEndpoint("/game-websocket")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
+    }
+
+    // ─── BEAN DEFINITION FOR WEB-SOCKET HEARTBEATS ───
+    @Bean
+    public ThreadPoolTaskScheduler heartbeatScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("ws-heartbeat-thread-");
+        scheduler.initialize();
+        return scheduler;
     }
 
     @Override

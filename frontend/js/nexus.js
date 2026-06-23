@@ -876,14 +876,6 @@ const GameManager = {
 
         // Bind operational subscriptions dynamically
         WebSocketManager.subscribeRoom(roomId);
-
-        // Auto-toss initiation: the player with alphabetically lower username initiates
-        if (STATE.auth.currentUser < opponent) {
-            Logger.info(`Auto-initiating coin toss for room ${roomId}`);
-            setTimeout(() => {
-                WebSocketManager.send(`/app/toss/${roomId}`);
-            }, 500);
-        }
     },
 
     resetLocalFields: function () {
@@ -975,7 +967,7 @@ const GameManager = {
         if (!payload || !payload.type) return;
 
         switch (payload.type) {
-            case 'TOSS':
+           /* case 'TOSS':
                 UIManager.showModal('toss-modal');
                 if (payload.winner === STATE.auth.currentUser) {
                     DomCache.get('toss-result-title').textContent = 'You Won the Toss! 🎉';
@@ -988,10 +980,12 @@ const GameManager = {
                     DomCache.get('toss-winner-section').style.display = 'none';
                     DomCache.get('toss-loser-section').style.display = 'block';
                 }
-                break;
+                break;*/
 
             case 'TOSS_RESULT':
+                // Defensive: close modal if it was never shown
                 UIManager.closeModal('toss-modal');
+
                 if (payload.payload === STATE.auth.currentUser) {
                     STATE.game.mySign = 'X';
                     STATE.game.opponentSign = 'O';

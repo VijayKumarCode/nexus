@@ -913,7 +913,7 @@ const GameManager = {
     submitTossChoice: function (choice) {
         const roomId = STATE.game.currentRoomId;
         if (!roomId || !WebSocketManager.isConnected) return;
-        WebSocketManager.send('/app/toss/decision', { message: roomId, payload: choice });
+        WebSocketManager.send(`/app/toss/decision/${roomId}`, { payload: choice });
         UIManager.closeModal('toss-modal');
     },
 

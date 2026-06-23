@@ -42,27 +42,19 @@ public class GameController {
 
         String replier = principal.getName();
 
-        log.info(
-                "Challenge reply from {}: status={}",
-                replier,
-                message.getStatus()
-        );
+        log.info("Challenge reply from {}: status={}", replier, message.getStatus());
 
         if (message.getStatus() == ChallengeStatus.ACCEPTED) {
-
             gameService.resetGame(message.getRoomId());
-
-            gameService.registerRoom(
-                    message.getRoomId(),
-                    message.getSender(),
-                    message.getReceiver()
-            );
+            // FIX: Use roomId-derived players for consistent ordering
+            String[] players = message.getRoomId().split("_");
+            gameService.registerRoom(message.getRoomId(), players[0], players[1]);
         }
 
         challengeService.respondToChallenge(message);
 
-        // FIX NEXUS-008: Send response to the ORIGINAL SENDER (challenger), not receiver
-        String notifyUser = message.getSender();
+        // FIX NEXUS-026: Send response to the ORIGINAL CHALLENGER (receiver), not the replier
+        String notifyUser = message.getReceiver();
         messagingTemplate.convertAndSend(
                 "/topic/challenges/" + notifyUser,
                 message

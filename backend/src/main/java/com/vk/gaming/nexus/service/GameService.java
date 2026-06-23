@@ -12,11 +12,13 @@ import com.vk.gaming.nexus.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Service
@@ -34,6 +36,8 @@ public class GameService {
     private final Map<String, String> playerO = new ConcurrentHashMap<>();
     private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> rematchRequests = new ConcurrentHashMap<>();
+    // FIX NEXUS-022: Track last activity for TTL cleanup
+    private final Map<String, Long> roomLastActivity = new ConcurrentHashMap<>();
 
     public boolean isRoomParticipant(String roomId,
                                      String username) {
@@ -57,6 +61,15 @@ public class GameService {
                         username.equals(players[1]));
     }
 
+    // FIX NEXUS-009: Ensure room is registered before toss authorization check
+    public void ensureRoomRegistered(String roomId, String playerOne, String playerTwo) {
+        roomPlayers.computeIfAbsent(roomId, k -> {
+            log.info("Auto-registering room {} [{} vs {}]", roomId, playerOne, playerTwo);
+            roomLastActivity.put(roomId, System.currentTimeMillis());
+            return new String[]{playerOne, playerTwo};
+        });
+    }
+
     @Transactional
     public GameMove processGameMove(GameMove incomingMove) {
         String roomId = incomingMove.getRoomId();
@@ -66,8 +79,17 @@ public class GameService {
             return null;
         }
 
+        String playerUsername = incomingMove.getPlayerUsername();
+
+        // FIX NEXUS-011: Validate player is room participant
+        if (!isRoomParticipant(roomId, playerUsername)) {
+            log.warn("Unauthorized move — room={} player={} not a participant",
+                    roomId, playerUsername);
+            return null;
+        }
+
         log.info("processGameMove — room={} player={} pos={}",
-                roomId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition());
+                roomId, playerUsername, incomingMove.getBoardPosition());
 
         if (!currentTurn.containsKey(roomId)) {
             log.warn("currentTurn miss for room={} — attempting DB recovery", roomId);
@@ -80,9 +102,9 @@ public class GameService {
             return null;
         }
 
-        if (!incomingMove.getPlayerUsername().equals(expectedPlayer)) {
+        if (!playerUsername.equals(expectedPlayer)) {
             log.warn("Wrong turn — room={} expected={} got={}",
-                    roomId, expectedPlayer, incomingMove.getPlayerUsername());
+                    roomId, expectedPlayer, playerUsername);
             return null;
         }
 
@@ -91,15 +113,15 @@ public class GameService {
             return null;
         }
 
-        String symbol = incomingMove.getPlayerUsername().equals(playerX.get(roomId)) ? "X" : "O";
+        String symbol = playerUsername.equals(playerX.get(roomId)) ? "X" : "O";
         incomingMove.setSymbol(symbol);
 
         log.info("Move accepted — room={} player={} pos={} symbol={}",
-                roomId, incomingMove.getPlayerUsername(), incomingMove.getBoardPosition(), symbol);
+                roomId, playerUsername, incomingMove.getBoardPosition(), symbol);
 
         GameMoveEntity entity = new GameMoveEntity();
         entity.setRoomId(roomId);
-        entity.setPlayerUsername(incomingMove.getPlayerUsername());
+        entity.setPlayerUsername(playerUsername);
         entity.setBoardPosition(incomingMove.getBoardPosition());
         entity.setSymbol(symbol);
 
@@ -109,6 +131,9 @@ public class GameService {
             log.error("DB save failed — room={} error={}", roomId, e.getMessage(), e);
             return null;
         }
+
+        // FIX NEXUS-022: Update activity timestamp
+        roomLastActivity.put(roomId, System.currentTimeMillis());
 
         char[] board = buildBoard(roomId);
         String winnerSymbol = checkWinner(board);
@@ -121,6 +146,7 @@ public class GameService {
             incomingMove.setGameState("WINNER_" + winnerSymbol);
             log.info("Game over — room={} winner={}", roomId, winner);
             currentTurn.remove(roomId);
+            roomLastActivity.remove(roomId);
             return incomingMove;
         }
 
@@ -128,6 +154,7 @@ public class GameService {
             incomingMove.setGameState("DRAW");
             log.info("Draw — room={}", roomId);
             currentTurn.remove(roomId);
+            roomLastActivity.remove(roomId);
             return incomingMove;
         }
 
@@ -210,12 +237,14 @@ public class GameService {
                     + roomId + " p1=" + request.getPlayerOne() + " p2=" + request.getPlayerTwo());
         }
 
-        boolean coin = new Random().nextBoolean();
+        // FIX NEXUS-024: Use ThreadLocalRandom instead of new Random()
+        boolean coin = ThreadLocalRandom.current().nextBoolean();
         String winner = coin ? request.getPlayerOne() : request.getPlayerTwo();
         String loser = coin ? request.getPlayerTwo() : request.getPlayerOne();
 
         tossWinner.put(roomId, winner);
         roomPlayers.put(roomId, new String[]{request.getPlayerOne(), request.getPlayerTwo()});
+        roomLastActivity.put(roomId, System.currentTimeMillis());
         log.info("Toss — room={} winner={}", roomId, winner);
 
         GameSystemMessage res = new GameSystemMessage();
@@ -243,6 +272,7 @@ public class GameService {
         playerX.put(roomId, firstPlayer);
         playerO.put(roomId, secondPlayer);
         currentTurn.put(roomId, firstPlayer);
+        roomLastActivity.put(roomId, System.currentTimeMillis());
 
         log.info("Toss decision — room={} choice={} X={} O={}", roomId, choice, firstPlayer, secondPlayer);
 
@@ -264,6 +294,9 @@ public class GameService {
         playerO.remove(roomId);
         tossWinner.remove(roomId);
         roomPlayers.remove(roomId);
+        // FIX NEXUS-012: Clean rematch requests
+        rematchRequests.remove(roomId);
+        roomLastActivity.remove(roomId);
 
         log.info("Game reset — room={}", roomId);
     }
@@ -276,6 +309,7 @@ public class GameService {
                 roomId,
                 new String[]{playerOne, playerTwo}
         );
+        roomLastActivity.put(roomId, System.currentTimeMillis());
 
         log.info(
                 "Room registered: {} [{} vs {}]",
@@ -327,6 +361,10 @@ public class GameService {
             String[] players = roomPlayers.get(roomId);
             if (players != null) {
                 String opponent = username.equals(players[0]) ? players[1] : players[0];
+
+                // FIX NEXUS-014: Record win/loss on disconnect
+                userService.incrementWins(opponent);
+                userService.incrementLosses(username);
 
                 GameSystemMessage abortMsg = new GameSystemMessage();
                 abortMsg.setType("GAME_ABORTED");
@@ -382,6 +420,25 @@ public class GameService {
             msg.setSender(username);
             msg.setMessage(username + " wants a rematch!");
             return msg;
+        }
+    }
+
+    // FIX NEXUS-022: Scheduled cleanup of abandoned rooms
+    @Scheduled(fixedRate = 300_000) // Every 5 minutes
+    public void cleanupAbandonedRooms() {
+        long cutoff = System.currentTimeMillis() - 30 * 60 * 1000; // 30 minutes
+        int cleaned = 0;
+        for (Iterator<Map.Entry<String, Long>> it = roomLastActivity.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, Long> entry = it.next();
+            if (entry.getValue() < cutoff) {
+                String roomId = entry.getKey();
+                log.info("Cleaning up abandoned room: {}", roomId);
+                resetGame(roomId);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            log.info("Cleaned up {} abandoned rooms", cleaned);
         }
     }
 }

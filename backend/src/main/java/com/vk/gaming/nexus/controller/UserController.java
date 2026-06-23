@@ -5,6 +5,7 @@ import com.vk.gaming.nexus.entity.User;
 import com.vk.gaming.nexus.enums.UserStatus;
 import com.vk.gaming.nexus.service.JwtService;
 import com.vk.gaming.nexus.service.UserService;
+import com.vk.gaming.nexus.config.AppProperties;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,8 +16,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +28,7 @@ public class UserController {
 
     private final UserService userService;
     private final JwtService jwtService;
+    private final AppProperties appProperties;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody @Valid AuthRequest request) {
@@ -47,11 +47,13 @@ public class UserController {
     @GetMapping("/activate")
     public ResponseEntity<?> activateAccount(@RequestParam String token) {
         boolean activated = userService.activateAccount(token);
+        // FIX NEXUS-021: Use configurable base URL instead of hardcoded
+        String baseUrl = appProperties.getBaseUrl();
         if (activated) {
             return ResponseEntity.status(HttpStatus.FOUND)
                     .header(
                             HttpHeaders.LOCATION,
-                            "https://www.nexusgame.space/activate?success=true"
+                            baseUrl + "/activate?success=true"
                     )
                     .build();
         }
@@ -59,7 +61,7 @@ public class UserController {
                 .status(HttpStatus.FOUND)
                 .header(
                         HttpHeaders.LOCATION,
-                        "https://www.nexusgame.space/activate?success=false"
+                        baseUrl + "/activate?success=false"
                 )
                 .build();
     }

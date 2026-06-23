@@ -46,6 +46,29 @@ public class WebSocketEventListener {
             attrs.put("username", username);
             log.info("WebSocket session stored authenticated username={}", username);
         }
+
+        // FIX NEXUS-006: Broadcast ONLINE status on connect
+        userRepository.findByUsername(username).ifPresent(u -> {
+            if (u.getStatus() != UserStatus.IN_GAME) {
+                u.setStatus(UserStatus.ONLINE);
+                u.setLastSeen(System.currentTimeMillis());
+                userRepository.save(u);
+            }
+            messagingTemplate.convertAndSend("/topic/lobby.status",
+                    new PlayerStatus(username, u.getStatus()));
+            log.info("Broadcasted connect status for {}: {}", username, u.getStatus());
+        });
+
+        // FIX NEXUS-017: Check if user has active game and notify rejoin
+        userRepository.findByUsername(username).ifPresent(u -> {
+            if (u.getStatus() == UserStatus.IN_GAME) {
+                // Notify user to rejoin their active game
+                // Frontend should listen for this and redirect to game room
+                messagingTemplate.convertAndSendToUser(username, "/queue/rejoin",
+                        Map.of("action", "REJOIN_REQUIRED", "username", username));
+                log.info("Notified {} to rejoin active game", username);
+            }
+        });
     }
 
     @EventListener

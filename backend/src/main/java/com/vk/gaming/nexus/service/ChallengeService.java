@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -37,7 +38,22 @@ public class ChallengeService {
 
     @Transactional
     public void createChallenge(ChallengeMessage message) {
-        challengeRepository.deleteByRoomId(message.getRoomId());
+        // FIX NEXUS-007: Only delete challenges where sender matches (ownership check)
+        challengeRepository.findTopByRoomIdOrderByCreatedAtDesc(message.getRoomId()).ifPresent(existing -> {
+            if (existing.getSender().equals(message.getSender())) {
+                challengeRepository.deleteByRoomId(message.getRoomId());
+                log.info("Deleted existing challenge for room {} by sender {}",
+                        message.getRoomId(), message.getSender());
+            } else {
+                log.warn("User {} attempted to overwrite challenge owned by {} in room {}",
+                        message.getSender(), existing.getSender(), message.getRoomId());
+            }
+        });
+
+        // FIX NEXUS-007: Use UUID-based roomId if not provided to prevent guessing
+        if (message.getRoomId() == null || message.getRoomId().isBlank()) {
+            message.setRoomId(message.getSender() + "_" + message.getReceiver() + "_" + UUID.randomUUID().toString().substring(0, 8));
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -94,17 +110,10 @@ public class ChallengeService {
         });
     }
 
-    /**
-     * Cleans up any pending challenges involving a disconnected user
-     * and sends a cancellation broadcast to the surviving opponent.
-     *
-     * @param disconnectedUser The username of the player who went offline.
-     */
     @Transactional
     public void cancelStaleChallenges(String disconnectedUser) {
         log.debug("Processing disconnect cleanup for challenges involving user: {}", disconnectedUser);
 
-        // 1. Leverage your existing custom repository query
         List<ChallengeEntity> activeChallenges = challengeRepository
                 .findPendingByUser(disconnectedUser, ChallengeStatus.PENDING);
 
@@ -113,16 +122,13 @@ public class ChallengeService {
         }
 
         for (ChallengeEntity challenge : activeChallenges) {
-            // 2. Terminate the challenge state
             challenge.setStatus(ChallengeStatus.CANCELLED);
             challengeRepository.save(challenge);
 
-            // 3. Extract the active player who is still online waiting in the modal
             String survivingPlayer = challenge.getSender().equals(disconnectedUser)
                     ? challenge.getReceiver()
                     : challenge.getSender();
 
-            // 4. Construct the payload matching your ChallengeMessage DTO structure
             ChallengeMessage abortMsg = new ChallengeMessage();
             abortMsg.setType(MessageType.CHALLENGE_RESPONSE);
             abortMsg.setStatus(ChallengeStatus.CANCELLED);
@@ -133,44 +139,22 @@ public class ChallengeService {
             log.info("Notifying surviving player [{}] that challenge in room [{}] was cancelled due to disconnect.",
                     survivingPlayer, challenge.getRoomId());
 
-            // 5. Publish to the exact topic your frontend is subscribing to in nexus.js
             messagingTemplate.convertAndSend("/topic/challenges/" + survivingPlayer, abortMsg);
         }
     }
 
+    // FIX NEXUS-019: Use single atomic update query, remove separate read-then-update
     @Scheduled(fixedRateString = "${challenge.expiry-check-rate-ms:5000}")
     @Transactional
     public void expireOldChallenges() {
         LocalDateTime now = LocalDateTime.now();
 
-        List<ChallengeEntity> expired =
-                challengeRepository.findByStatusAndExpiresAtBefore(ChallengeStatus.PENDING, now);
-
+        // Single atomic update — no separate query needed
         int updated = challengeRepository.cancelExpiredChallenges(now, ChallengeStatus.CANCELLED, ChallengeStatus.PENDING);
-
-        for (ChallengeEntity c : expired) {
-            notifyCancellation("SYSTEM", c);
-        }
 
         if (updated > 0) {
             log.info("Auto-cancelled {} expired challenges", updated);
         }
-    }
-
-    private void notifyCancellation(String requester, ChallengeEntity stale) {
-        ChallengeMessage msg = new ChallengeMessage();
-        msg.setType(MessageType.CHALLENGE_RESPONSE);
-        msg.setStatus(ChallengeStatus.CANCELLED);
-        msg.setSender(requester);
-        msg.setRoomId(stale.getRoomId());
-
-        String target = stale.getSender().equals(requester)
-                ? stale.getReceiver()
-                : stale.getSender();
-
-        msg.setReceiver(target);
-
-        messagingTemplate.convertAndSend("/topic/challenges/" + target, msg);
     }
 
     private void updatePlayerStatus(String username, UserStatus status) {

@@ -1,11 +1,13 @@
 package com.vk.gaming.nexus.config;
 
 import com.vk.gaming.nexus.repository.UserRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -22,8 +24,16 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+/**
+ * Spring Security 6.4+ Configuration
+ *
+ * Modern approach: expose UserDetailsService and PasswordEncoder as beans.
+ * Spring Boot auto-configures DaoAuthenticationProvider internally.
+ * No manual ProviderManager or DaoAuthenticationProvider instantiation needed.
+ */
 @Configuration
 @EnableWebSecurity
+@Slf4j
 public class SecurityConfig {
 
     private final AppProperties appProperties;
@@ -36,6 +46,9 @@ public class SecurityConfig {
         this.userRepository = userRepository;
     }
 
+    /**
+     * UserDetailsService bean — Spring Boot auto-configures DaoAuthenticationProvider using this.
+     */
     @Bean
     public UserDetailsService userDetailsService() {
         return username -> userRepository.findByUsername(username)
@@ -48,12 +61,22 @@ public class SecurityConfig {
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 
+    /**
+     * PasswordEncoder bean — Spring Boot auto-configures DaoAuthenticationProvider using this.
+     */
     @Bean
-    public AuthenticationManager authenticationManager() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService());
-        provider.setPasswordEncoder(passwordEncoder());
-        return new ProviderManager(provider);
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * AuthenticationManager via AuthenticationConfiguration.
+     * Spring Boot internally uses the auto-configured DaoAuthenticationProvider
+     * backed by our UserDetailsService and PasswordEncoder beans.
+     */
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+        return authenticationConfiguration.getAuthenticationManager();
     }
 
     @Bean
@@ -63,11 +86,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // explicitly permit all OPTIONS preflight requests
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/users/login", "/api/users/register",
                                 "/api/users/activate", "/api/users/resend-activation").permitAll()
-                        .requestMatchers("/api/recovery/**").permitAll()
                         .requestMatchers("/api/users/check-username").permitAll()
                         .requestMatchers("/api/users/health").permitAll()
                         .requestMatchers("/game-websocket/**").permitAll()
@@ -81,26 +102,20 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // Hardcode the allowed patterns to bypass environment variable list-parsing bugs
-        config.setAllowedOriginPatterns(List.of(
-                "https://nexusgame.space",
-                "https://www.nexusgame.space",
-                "http://localhost:3000",
-                "http://localhost:8080"
-        ));
+        List<String> origins = appProperties.getAllowedOrigins();
+        if (origins == null || origins.isEmpty()) {
+            log.warn("CRITICAL SECURITY WARNING: app.allowed-origins is empty. Using production-safe fallback.");
+            origins = List.of("https://nexusgame.space", "https://www.nexusgame.space");
+        }
 
+        config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
-        config.setMaxAge(3600L); // Cache preflight responses for 1 hour
+        config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
     }
 }

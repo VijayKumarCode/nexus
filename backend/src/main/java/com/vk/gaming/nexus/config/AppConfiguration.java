@@ -14,8 +14,9 @@ public class AppConfiguration {
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
         return builder
-                .setConnectTimeout(Duration.ofSeconds(10))
-                .setReadTimeout(Duration.ofSeconds(30))
+                // FIX: Spring Boot 3.4+ — replaced deprecated setConnectTimeout/setReadTimeout
+                .connectTimeout(Duration.ofSeconds(10))   // was: setConnectTimeout
+                .readTimeout(Duration.ofSeconds(30))      // was: setReadTimeout
                 .build();
     }
 

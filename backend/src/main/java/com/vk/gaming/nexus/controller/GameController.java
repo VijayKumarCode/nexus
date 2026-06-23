@@ -61,8 +61,10 @@ public class GameController {
 
         challengeService.respondToChallenge(message);
 
+        // FIX NEXUS-008: Send response to the ORIGINAL SENDER (challenger), not receiver
+        String notifyUser = message.getSender();
         messagingTemplate.convertAndSend(
-                "/topic/challenges/" + message.getReceiver(),
+                "/topic/challenges/" + notifyUser,
                 message
         );
     }
@@ -71,6 +73,16 @@ public class GameController {
     public void handleToss(@DestinationVariable String roomId, Principal principal) {
         String username = principal.getName();
 
+        // FIX NEXUS-009: Validate roomId format and pre-register if needed
+        String[] players = roomId.split("_");
+        if (players.length != 2) {
+            log.warn("Invalid roomId format: {}", roomId);
+            return;
+        }
+
+        // Ensure room is registered (handles race condition where accept hasn't completed)
+        gameService.ensureRoomRegistered(roomId, players[0], players[1]);
+
         // 1. Verify authorization
         if (!gameService.isRoomParticipant(roomId, username)) {
             log.warn("Unauthorized toss attempt by {} in room {}", username, roomId);
@@ -78,10 +90,6 @@ public class GameController {
         }
 
         // 2. Construct the required TossRequest DTO
-        // We split the room ID to identify the two players
-        String[] players = roomId.split("_");
-        if (players.length < 2) return;
-
         TossRequest tossRequest = new TossRequest();
         tossRequest.setRoomId(roomId);
         tossRequest.setPlayerOne(players[0]);
@@ -160,17 +168,21 @@ public class GameController {
         log.info("room={}", message.getRoomId());
         log.info("player={}", username);
 
+        // FIX NEXUS-013: markPlayersOnlineByRoom already resets users internally
         gameService.markPlayersOnlineByRoom(message.getRoomId());
 
         log.info("markPlayersOnlineByRoom completed");
 
-        message.setType(MessageType.GAME_ABORTED);
-        message.setStatus(ChallengeStatus.CANCELLED);
-        message.setSender(username);
+        // FIX NEXUS-008: Use GameSystemMessage for game topic instead of ChallengeMessage
+        GameSystemMessage abortMsg = new GameSystemMessage();
+        abortMsg.setType("GAME_ABORTED");
+        abortMsg.setMessage(username + " aborted the game.");
+        abortMsg.setWinner(username);
+        abortMsg.setPayload(username);
 
         messagingTemplate.convertAndSend(
                 "/topic/game/" + message.getRoomId(),
-                message
+                abortMsg
         );
 
         String[] parts = message.getRoomId().split("_");
@@ -178,10 +190,9 @@ public class GameController {
         log.info("room split={}", java.util.Arrays.toString(parts));
 
         if (parts.length >= 2) {
-            log.info("Broadcasting and Persisting ONLINE status for {} and {}", parts[0], parts[1]);
+            log.info("Broadcasting ONLINE status for {} and {}", parts[0], parts[1]);
 
-            gameService.resetUser(parts[0]);
-            gameService.resetUser(parts[1]);
+            // FIX NEXUS-013: Removed redundant resetUser calls — already done by markPlayersOnlineByRoom
 
             messagingTemplate.convertAndSend(
                     "/topic/lobby.status",
@@ -197,10 +208,11 @@ public class GameController {
         log.info("========== END ABORT ==========");
     }
 
-    @MessageMapping("/toss/decision")
-    public void handleTossDecision(@Payload GameSystemMessage msg,
+    // FIX NEXUS-010: Use @DestinationVariable for roomId instead of msg.getMessage()
+    @MessageMapping("/toss/decision/{roomId}")
+    public void handleTossDecision(@DestinationVariable String roomId,
+                                   @Payload GameSystemMessage msg,
                                    Principal principal) {
-        String roomId = msg.getMessage(); // Extracting room context via continuous message payload field mapping
         if (!gameService.isRoomParticipant(roomId, principal.getName())) {
             log.warn("Unauthorized toss decision by {} in room {}", principal.getName(), roomId);
             return;

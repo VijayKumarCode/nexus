@@ -9,10 +9,8 @@
 /* ══════════════════════════════════
    CONFIG
 ══════════════════════════════════ */
-const BACKEND_URL = CONFIG.API_BASE_URL;
 const API_BASE = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.REGISTER.replace('/register', '')}`; // Points to /api/users
 const RECOVERY_BASE = `${CONFIG.API_BASE_URL}/api/recovery`;
-const WS_ENDPOINT = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.WS_GAME}`; // Resolves dynamically to /game-websocket
 
 
 /* ══════════════════════════════════
@@ -40,7 +38,7 @@ const STATE = {
         }
     },
     lobby: {
-        lobbyIntervalId: null,
+        pollingIntervalId: null,
         leaderboardIntervalId: null,
         challengePending: false
     },
@@ -50,7 +48,7 @@ const STATE = {
         currentRoomId: '',
         isMyTurn: false,
         isGameOver: false,
-        mySymbol: '',
+        mySign: '',
         tossSubmitted: false,
         tossGameStartHandled: false,
         boardLocked: false
@@ -110,25 +108,49 @@ const Logger = {
 
 const StorageManager = {
     getToken() {
-                return localStorage.getItem(CONFIG.STORAGE.TOKEN_KEY);
-            },
-    setToken(val) {
-            localStorage.setItem(CONFIG.STORAGE.TOKEN_KEY, val);
-        },
+        return localStorage.getItem(CONFIG.STORAGE.TOKEN_KEY);
+    },
+
+    setToken(token) {
+        localStorage.setItem(CONFIG.STORAGE.TOKEN_KEY, token);
+    },
+
     removeToken() {
-            localStorage.removeItem(CONFIG.STORAGE.TOKEN_KEY);
-        },
+        localStorage.removeItem(CONFIG.STORAGE.TOKEN_KEY);
+    },
+
     getUser() {
-            return localStorage.getItem(CONFIG.STORAGE.USER_DATA_KEY);
-        },
-    setUser(val) {
-            localStorage.setItem(CONFIG.STORAGE.USER_DATA_KEY, val);
-        },
+        const raw = localStorage.getItem(CONFIG.STORAGE.USER_DATA_KEY);
+
+        if (!raw) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    },
+
+    setUser(userData) {
+        localStorage.setItem(
+            CONFIG.STORAGE.USER_DATA_KEY,
+            JSON.stringify(userData)
+        );
+    },
+
     removeUser() {
-            localStorage.removeItem(CONFIG.STORAGE.USER_DATA_KEY);
-        },
+        localStorage.removeItem(CONFIG.STORAGE.USER_DATA_KEY);
+    },
+
+    isAuthenticated() {
+        return !!this.getToken();
+    },
+
     clearAll() {
-        this.removeToken(); this.removeUser();
+        this.removeToken();
+        this.removeUser();
     }
 };
 
@@ -304,8 +326,12 @@ const UIManager = {
    AUTH
 ══════════════════════════════════ */
 const AuthManager = {
-    get currentUser() { return STATE.auth.currentUser; },
-    set currentUser(val) { STATE.auth.currentUser = val; },
+    get currentUser() {
+        return STATE.auth.currentUser;
+    },
+    set currentUser(val) {
+        STATE.auth.currentUser = val;
+    },
 
     async checkSession() {
         const saved = StorageManager.getUser();
@@ -314,7 +340,7 @@ const AuthManager = {
             this.currentUser = saved;
             UIManager.updateLobbyGreeting();
             try {
-                await ApiManager.request(`${API_BASE}/heartbeat`, { method: 'POST' });
+                await ApiManager.request(`${API_BASE}/heartbeat`, {method: 'POST'});
                 UIManager.showScreen('lobby-screen');
                 WebSocketManager.connect(() => {
                     LobbyManager.initializeLobbySynchronization();
@@ -334,7 +360,7 @@ const AuthManager = {
         STATE.auth.heartbeatIntervalId = setInterval(async () => {
             if (this.currentUser) {
                 try {
-                    await ApiManager.request(`${API_BASE}/heartbeat`, { method: 'POST' });
+                    await ApiManager.request(`${API_BASE}/heartbeat`, {method: 'POST'});
                 } catch (e) {
                     Logger.error('Heartbeat check failed', e);
                 }
@@ -390,21 +416,42 @@ const AuthManager = {
         const e = DomCache.get('reg-email').value.trim();
         const p = DomCache.get('reg-password').value;
 
-        if (!fn || !u || !e || !p) { UIManager.showToast('Please fill all fields', 'error'); return; }
-        if (fn.length > 100) { UIManager.showToast('Full name must be 100 characters or less', 'error'); return; }
-        if (u.length < 3 || u.length > 30) { UIManager.showToast('Username must be 3-30 characters', 'error'); return; }
-        if (!VALIDATORS.username(u)) { UIManager.showToast('Username: letters, numbers, and underscores only', 'error'); return; }
-        if (!VALIDATORS.email(e)) { UIManager.showToast('Please enter a valid email address', 'error'); return; }
-        if (p.length < 8) { UIManager.showToast('Password must be at least 8 characters', 'error'); return; }
+        if (!fn || !u || !e || !p) {
+            UIManager.showToast('Please fill all fields', 'error');
+            return;
+        }
+        if (fn.length > 100) {
+            UIManager.showToast('Full name must be 100 characters or less', 'error');
+            return;
+        }
+        if (u.length < 3 || u.length > 30) {
+            UIManager.showToast('Username must be 3-30 characters', 'error');
+            return;
+        }
+        if (!VALIDATORS.username(u)) {
+            UIManager.showToast('Username: letters, numbers, and underscores only', 'error');
+            return;
+        }
+        if (!VALIDATORS.email(e)) {
+            UIManager.showToast('Please enter a valid email address', 'error');
+            return;
+        }
+        if (p.length < 8) {
+            UIManager.showToast('Password must be at least 8 characters', 'error');
+            return;
+        }
 
         const btn = DomCache.get('registerBtn');
-        if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+        }
 
         try {
             await ApiManager.request(`${API_BASE}/register`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fullName: fn, username: u, email: e, password: p })
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({fullName: fn, username: u, email: e, password: p})
             });
             UIManager.showToast('Activation link sent! Check your email (including spam folder).', 'success');
             UIManager.showScreen('login-screen');
@@ -415,7 +462,10 @@ const AuthManager = {
             }
             UIManager.showToast(msg, 'error');
         } finally {
-            if (btn) { btn.disabled = false; btn.textContent = 'Create Account'; }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Create Account';
+            }
         }
     },
 
@@ -423,16 +473,22 @@ const AuthManager = {
         const u = DomCache.get('login-username').value.trim();
         const p = DomCache.get('login-password').value;
 
-        if (!u || !p) { UIManager.showToast('Please enter your username and password', 'error'); return; }
+        if (!u || !p) {
+            UIManager.showToast('Please enter your username and password', 'error');
+            return;
+        }
 
         const btn = DomCache.get('loginBtn');
-        if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Signing in...';
+        }
 
         try {
             const data = await ApiManager.request(`${API_BASE}/login`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: u, password: p })
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: u, password: p})
             });
 
             this.currentUser = data.user.username;
@@ -440,7 +496,7 @@ const AuthManager = {
             StorageManager.setToken(data.token);
             UIManager.updateLobbyGreeting();
 
-            await ApiManager.request(`${API_BASE}/sync`, { method: 'POST' });
+            await ApiManager.request(`${API_BASE}/sync`, {method: 'POST'});
             this.startHeartbeat();
             UIManager.showScreen('lobby-screen');
             WebSocketManager.connect(() => {
@@ -453,32 +509,33 @@ const AuthManager = {
             }
             UIManager.showToast(msg, 'error');
         } finally {
-            if (btn) { btn.disabled = false; btn.textContent = 'Enter Arena'; }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Enter Arena';
+            }
         }
     },
 
-    logout() {
+    async logout() {
+        try {
+            await ApiManager.request(`${API_BASE}/logout`, {method: 'POST'});
+        } catch (e) {
+            Logger.warn('Logout API call failed', e);
+        }
         StorageManager.clearAll();
         this.stopHeartbeat();
-
-        // SAFE GUARD: Check if LobbyManager exists and has the method before calling it
-        if (typeof LobbyManager !== 'undefined' && typeof LobbyManager.clearTimers === 'function') {
-            LobbyManager.clearTimers();
-        } else {
-            console.warn("LobbyManager or clearTimers method not initialized yet during this logout cycle.");
-        }
-
-        if (STATE.auth.usernameCheckTimeoutId) clearTimeout(STATE.auth.usernameCheckTimeoutId);
-
+        LobbyManager.clearTimers();
         WebSocketManager.disconnect();
         GameManager.resetLocalFields();
 
-        this.currentUser = '';
-        STATE.recovery.pendingEmail = '';
-        STATE.recovery.recoveryMode = '';
+        STATE.game.tossSubmitted = false;
+        STATE.game.tossGameStartHandled = false;
+        STATE.game.boardLocked = true;
+        Logger.info('BOARD_LOCKED reason=USER_LOGOUT');
 
+        this.currentUser = '';
         UIManager.showScreen('home-screen');
-    }
+    },
 };
 
 /* ══════════════════════════════════
@@ -596,7 +653,7 @@ const LobbyManager = {
     },
 
     filterLobby: function () {
-        const searchInput = DomCache.get('lobby-search');
+        const searchInput = DomCache.get('player-search');
         if (!searchInput) return;
         const query = searchInput.value.toLowerCase().trim();
         const list = DomCache.get('online-users-list');
@@ -617,60 +674,111 @@ const LobbyManager = {
         const list = DomCache.get('online-users-list');
         if (!list) return;
 
-        // CRITICAL FIX: Removed brittle CSS .style.display === 'none' guard trap
-        // Data model hydration must execute safely regardless of transient UI animation frames.
-
         try {
-            const users = await ApiManager.request(`${API_BASE}/lobby`, {method: 'GET'});
+            const users = await ApiManager.request(`${API_BASE}/lobby`, {
+                method: 'GET'
+            });
+
             list.innerHTML = '';
 
-            // Exclude self cleanly using centralized STATE metrics
-            const others = users.filter(u => u.username !== STATE.auth.currentUser);
+            const others = users.filter(
+                u => u.username !== STATE.auth.currentUser
+            );
 
             if (others.length === 0) {
                 list.innerHTML = `
-                    <div class="empty-lobby">
-                        <i class="fas fa-user-slash"></i>
-                        <p>No other players online right now</p>
-                    </div>`;
+                <div class="empty-lobby">
+                    <i class="fas fa-user-slash"></i>
+                    <p>No other players online right now</p>
+                </div>
+            `;
                 return;
             }
 
             others.forEach(user => {
-                const statusClass = user.status === 'ONLINE' ? 'status-online' : 'status-ingame';
-                const statusText = user.status === 'ONLINE' ? 'Online' : 'In Game';
-                const actionButton = user.status === 'ONLINE'
-                    ? `<button class="challenge-btn" onclick="window.sendChallenge('${user.username}')">
-                         <i class="fas fa-swords"></i> Challenge
-                       </button>`
-                    : `<button class="challenge-btn" disabled>
-                         <i class="fas fa-lock"></i> Busy
-                       </button>`;
+
+                const statusClass =
+                    user.status === 'ONLINE'
+                        ? 'status-online'
+                        : 'status-ingame';
+
+                const statusText =
+                    user.status === 'ONLINE'
+                        ? 'Online'
+                        : 'In Game';
 
                 const row = document.createElement('div');
                 row.className = 'player-row fade-in';
                 row.setAttribute('data-username', user.username);
+
                 row.innerHTML = `
-                    <div class="player-info">
-                        <div class="player-avatar-wrapper">
-                            <div class="player-avatar text-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                        </div>
-                        <div class="player-details" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
-                            <span class="player-name">${UIManager.sanitizeText(user.username)}</span>
-                            <span class="status-pill ${statusClass}">${statusText}</span>
+                <div class="player-info">
+                    <div class="player-avatar-wrapper">
+                        <div class="player-avatar text-avatar">
+                            ${UIManager.sanitizeText(
+                    user.username.charAt(0).toUpperCase()
+                )}
                         </div>
                     </div>
-                    <div class="player-actions">
-                        ${actionButton}
+
+                    <div class="player-details"
+                         style="display:flex;
+                                flex-direction:column;
+                                gap:4px;
+                                align-items:flex-start;">
+
+                        <span class="player-name">
+                            ${UIManager.sanitizeText(user.username)}
+                        </span>
+
+                        <span class="status-pill ${statusClass}">
+                            ${statusText}
+                        </span>
                     </div>
-                `;
+                </div>
+
+                <div class="player-actions"></div>
+            `;
+
+                const actionsContainer =
+                    row.querySelector('.player-actions');
+
+                if (user.status === 'ONLINE') {
+
+                    const btn = document.createElement('button');
+                    btn.className = 'challenge-btn';
+
+                    btn.innerHTML =
+                        '<i class="fas fa-swords"></i> Challenge';
+
+                    btn.addEventListener('click', () => {
+                        window.sendChallenge(user.username);
+                    });
+
+                    actionsContainer.appendChild(btn);
+
+                } else {
+
+                    const busyBtn = document.createElement('button');
+                    busyBtn.className = 'challenge-btn';
+                    busyBtn.disabled = true;
+
+                    busyBtn.innerHTML =
+                        '<i class="fas fa-lock"></i> Busy';
+
+                    actionsContainer.appendChild(busyBtn);
+                }
+
                 list.appendChild(row);
             });
+
         } catch (err) {
-            Logger.error('Failed to sync or refresh lobby data layout:', err);
+            Logger.error(
+                'Failed to sync or refresh lobby data layout:',
+                err
+            );
         }
     },
-
     refreshLeaderboard: async function () {
         const list = DomCache.get('leaderboard-list');
         if (!list) return;
@@ -806,8 +914,6 @@ const ChallengeManager = {
 
     acceptChallenge() {
         if (!GameManager.currentRoomId || !GameManager.opponentUser) return;
-
-        // 1. Dispatch authoritative payload to the backend for server validation
         WebSocketManager.send('/app/challenge/reply', {
             sender: AuthManager.currentUser,
             receiver: GameManager.opponentUser,
@@ -815,13 +921,9 @@ const ChallengeManager = {
             status: 'ACCEPTED',
             type: 'CHALLENGE_RESPONSE'
         });
-
-        // 2. Clean up local modal UI overlay immediately
         UIManager.closeModal('challenge-modal');
         this.challengePending = false;
-
-        // Optional: Provide instant visual feedback to the accepting player
-        UIManager.setStatus('Connecting to arena...', 'warning');
+        GameManager.setupGame(GameManager.currentRoomId, GameManager.opponentUser);
     },
 
     declineChallenge() {
@@ -874,13 +976,24 @@ const GameManager = {
         STATE.game.currentRoomId = roomId;
         STATE.game.opponentUser = opponent;
         STATE.game.isGameOver = false;
+
+        STATE.game.tossSubmitted = false;
+        STATE.game.tossGameStartHandled = false;
+        STATE.game.boardLocked = true;
+        Logger.info(`BOARD_LOCKED reason=INITIAL_ROOM_SETUP`);
+
         this.resetBoardState();
         UIManager.setRoomDisplay(STATE.auth.currentUser, opponent);
-
         UIManager.showScreen('game-container');
-
         DomCache.get('game-over-modal').style.display = 'none';
         WebSocketManager.subscribeRoom(roomId);
+
+        // Deterministic: alphabetically lower username sends the toss once
+        if (STATE.auth.currentUser < opponent) {
+            setTimeout(() => {
+                WebSocketManager.send(`/app/toss/${roomId}`);
+            }, 500);
+        }
     },
 
     resetLocalFields: function () {
@@ -913,12 +1026,21 @@ const GameManager = {
         if (!roomId || !WebSocketManager.isConnected) return;
         this.setMachineState('TOSS_PENDING');
         UIManager.showModal('toss-modal');
+        WebSocketManager.send('/app/toss/${roomId}');
     },
 
     submitTossChoice: function (choice) {
         const roomId = STATE.game.currentRoomId;
         if (!roomId || !WebSocketManager.isConnected) return;
-        WebSocketManager.send(`/app/toss/decision/${roomId}`, { payload: choice });
+
+        if (STATE.game.tossSubmitted) {
+            Logger.warn('Duplicate toss submission blocked');
+            return;
+        }
+        STATE.game.tossSubmitted = true;
+        Logger.info(`TOSS_SUBMITTED room=${roomId}`);
+
+        WebSocketManager.send('/app/toss/decision', { message: roomId, payload: choice });
         UIManager.closeModal('toss-modal');
     },
 
@@ -951,6 +1073,12 @@ const GameManager = {
     cleanupGameState() {
         WebSocketManager.unsubscribeRoom();
         this.resetLocalFields();
+
+        STATE.game.tossSubmitted = false;
+        STATE.game.tossGameStartHandled = false;
+        STATE.game.boardLocked = true;
+        Logger.info('BOARD_LOCKED reason=CLEANUP_GAME_STATE');
+
         UIManager.showScreen('lobby-screen');
 
         // FIX 2: Introduce 250ms transactional alignment delay.
@@ -963,16 +1091,28 @@ const GameManager = {
     sendMove: function (pos) {
         const roomId = STATE.game.currentRoomId;
         if (!roomId || !STATE.game.isMyTurn || STATE.game.isGameOver || !WebSocketManager.isConnected) return;
+
+        if (STATE.game.boardLocked) {
+            Logger.warn('Move blocked: board locked');
+            return;
+        }
         if (STATE.game.board[pos] !== '') return;
+
+        STATE.game.boardLocked = true;
+        Logger.info(`BOARD_LOCKED reason=MOVE_SENT`);
 
         WebSocketManager.send(`/app/move/${roomId}`, { boardPosition: pos });
     },
 
     handleRoomMessage: function (payload) {
-        if (!payload || !payload.type) return;
+        if (!payload) return;
+
+        if (!payload.type && payload.boardPosition !== undefined) {
+            payload.type = 'MOVE_UPDATE';
+        }
 
         switch (payload.type) {
-           /* case 'TOSS':
+            case 'TOSS':
                 UIManager.showModal('toss-modal');
                 if (payload.winner === STATE.auth.currentUser) {
                     DomCache.get('toss-result-title').textContent = 'You Won the Toss! 🎉';
@@ -985,11 +1125,13 @@ const GameManager = {
                     DomCache.get('toss-winner-section').style.display = 'none';
                     DomCache.get('toss-loser-section').style.display = 'block';
                 }
-                break;*/
+                break;
 
             case 'TOSS_RESULT':
                 // Defensive: close modal if it was never shown
                 UIManager.closeModal('toss-modal');
+
+                STATE.game.tossSubmitted = false;
 
                 if (payload.payload === STATE.auth.currentUser) {
                     STATE.game.mySign = 'X';
@@ -1005,24 +1147,40 @@ const GameManager = {
                 this.updateTurnDisplay();
                 break;
 
-            case 'MOVE_UPDATE':
-                const movePos = payload.boardPosition;
-                const player = payload.sender;
-                const symbol = (player === STATE.auth.currentUser) ? STATE.game.mySign : STATE.game.opponentSign;
-
-                STATE.game.board[movePos] = symbol;
-                const cell = DomCache.get('cells')[movePos];
-                if (cell) {
-                    cell.textContent = symbol;
-                    cell.classList.add(symbol.toLowerCase() === 'x' ? 'x-mark' : 'o-mark');
-                    cell.style.pointerEvents = 'none';
+            case 'GAME_START':
+                if (STATE.game.tossGameStartHandled) {
+                    Logger.warn('Duplicate GAME_START blocked');
+                    return;
                 }
+                STATE.game.tossGameStartHandled = true;
+                Logger.info(`GAME_START_PROCESSED room=${STATE.game.currentRoomId}`);
+
+                // The backend must send currentTurn in the GAME_START payload to determine initial locking
+                if (STATE.game.isMyTurn) { // Assuming isMyTurn was set accurately during TOSS_RESULT
+                    STATE.game.boardLocked = false;
+                    Logger.info(`BOARD_UNLOCKED player=${STATE.auth.currentUser}`);
+                } else {
+                    STATE.game.boardLocked = true;
+                    Logger.info(`BOARD_LOCKED reason=NOT_YOUR_TURN`);
+                }
+                break;
+
+            case 'MOVE_UPDATE': {
 
                 if (!STATE.game.isGameOver) {
                     STATE.game.isMyTurn = (player !== STATE.auth.currentUser);
                     this.updateTurnDisplay();
+
+                    if (STATE.game.isMyTurn) {
+                        STATE.game.boardLocked = false;
+                        Logger.info(`BOARD_UNLOCKED player=${STATE.auth.currentUser}`);
+                    } else {
+                        STATE.game.boardLocked = true;
+                        Logger.info(`BOARD_LOCKED reason=NOT_YOUR_TURN`);
+                    }
                 }
                 break;
+            }
 
             case 'GAME_OVER':
                 STATE.game.isGameOver = true;
@@ -1032,8 +1190,24 @@ const GameManager = {
 
             case 'GAME_ABORTED':
                 STATE.game.isGameOver = true;
+
+                STATE.game.tossSubmitted = false;
+                STATE.game.tossGameStartHandled = false;
+                STATE.game.boardLocked = true;
+                Logger.info('BOARD_LOCKED reason=GAME_ABORTED');
+
                 UIManager.showToast('Opponent left or aborted the match context.', 'warning');
                 this.cleanupGameState();
+                break;
+            case 'GAME_RESET':
+
+                STATE.game.tossSubmitted = false;
+                STATE.game.tossGameStartHandled = false;
+                STATE.game.boardLocked = true;
+                Logger.info('BOARD_LOCKED reason=GAME_RESET');
+
+                this.resetBoardState();
+                UIManager.showToast('Board cleared. New game!', 'info');
                 break;
 
             case 'REMATCH_OFFER':
@@ -1243,7 +1417,7 @@ const WebSocketManager = {
 ══════════════════════════════════ */
 function setupVisibilityAndNetworkListeners() {
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && AuthManager.currentUser) {
+       if (document.visibilityState === 'visible' && AuthManager.currentUser && GameManager.machineState === 'IDLE') {
             LobbyManager.refreshLobby();
             LobbyManager.refreshLeaderboard();
         }

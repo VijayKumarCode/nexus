@@ -7,8 +7,8 @@ import lombok.Data;
 
 @Data
 public class GameMove {
+    private String type;
     private String roomId;
-
     private String playerUsername;
 
     @Min(value = 0, message = "Board position must be 0-8")

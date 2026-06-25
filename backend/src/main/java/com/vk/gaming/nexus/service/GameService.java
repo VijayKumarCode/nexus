@@ -115,6 +115,7 @@ public class GameService {
 
         String symbol = playerUsername.equals(playerX.get(roomId)) ? "X" : "O";
         incomingMove.setSymbol(symbol);
+        incomingMove.setType("MOVE_UPDATE");
 
         log.info("Move accepted — room={} player={} pos={} symbol={}",
                 roomId, playerUsername, incomingMove.getBoardPosition(), symbol);

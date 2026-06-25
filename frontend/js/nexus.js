@@ -806,6 +806,8 @@ const ChallengeManager = {
 
     acceptChallenge() {
         if (!GameManager.currentRoomId || !GameManager.opponentUser) return;
+
+        // 1. Dispatch authoritative payload to the backend for server validation
         WebSocketManager.send('/app/challenge/reply', {
             sender: AuthManager.currentUser,
             receiver: GameManager.opponentUser,
@@ -813,9 +815,13 @@ const ChallengeManager = {
             status: 'ACCEPTED',
             type: 'CHALLENGE_RESPONSE'
         });
+
+        // 2. Clean up local modal UI overlay immediately
         UIManager.closeModal('challenge-modal');
         this.challengePending = false;
-        GameManager.setupGame(GameManager.currentRoomId, GameManager.opponentUser);
+
+        // Optional: Provide instant visual feedback to the accepting player
+        UIManager.setStatus('Connecting to arena...', 'warning');
     },
 
     declineChallenge() {
@@ -869,12 +875,11 @@ const GameManager = {
         STATE.game.opponentUser = opponent;
         STATE.game.isGameOver = false;
         this.resetBoardState();
-
         UIManager.setRoomDisplay(STATE.auth.currentUser, opponent);
-        UIManager.showScreen('game-screen');
-        DomCache.get('game-over-modal').style.display = 'none';
 
-        // Bind operational subscriptions dynamically
+        UIManager.showScreen('game-container');
+
+        DomCache.get('game-over-modal').style.display = 'none';
         WebSocketManager.subscribeRoom(roomId);
     },
 

@@ -36,9 +36,8 @@ public class GameController {
     }
 
     @MessageMapping("/challenge/reply")
-    public void handleChallengeReply(
-            @Payload @Valid ChallengeMessage message,
-            Principal principal) {
+    public void handleChallengeReply(@Payload @Valid ChallengeMessage message,
+                                     Principal principal) {
 
         String replier = principal.getName();
 
@@ -54,9 +53,13 @@ public class GameController {
         challengeService.respondToChallenge(message);
 
         // FIX NEXUS-026: Send response to the ORIGINAL CHALLENGER (receiver), not the replier
-        String notifyUser = message.getReceiver();
         messagingTemplate.convertAndSend(
-                "/topic/challenges/" + notifyUser,
+                "/topic/challenges/" + message.getReceiver(),
+                message
+        );
+
+        messagingTemplate.convertAndSend(
+                "/topic/challenges/" + message.getSender(),
                 message
         );
     }

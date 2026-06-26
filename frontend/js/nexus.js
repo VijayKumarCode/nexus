@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   NEXUS MULTIPLAYER ARENA — v4.0 (Architect Refactored)
+   NEXUS MULTIPLAYER ARENA — v4.0 (Production)
    Game Logic & WebSocket Client
    © 2026 Vijay Kumar. All rights reserved.
 ═══════════════════════════════════════════ */
@@ -10,10 +10,9 @@
    CONFIG
 ══════════════════════════════════ */
 const BACKEND_URL = CONFIG.API_BASE_URL;
-const API_BASE = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.REGISTER.replace('/register', '')}`; // Points to /api/users
+const API_BASE = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.REGISTER.replace('/register', '')}`;
 const RECOVERY_BASE = `${CONFIG.API_BASE_URL}/api/recovery`;
-const WS_ENDPOINT = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.WS_GAME}`; // Resolves dynamically to /game-websocket
-
+const WS_ENDPOINT = `${CONFIG.API_BASE_URL}${CONFIG.ENDPOINTS.WS_GAME}`;
 
 /* ══════════════════════════════════
    STATE
@@ -461,7 +460,6 @@ const AuthManager = {
         StorageManager.clearAll();
         this.stopHeartbeat();
 
-        // SAFE GUARD: Check if LobbyManager exists and has the method before calling it
         if (typeof LobbyManager !== 'undefined' && typeof LobbyManager.clearTimers === 'function') {
             LobbyManager.clearTimers();
         } else {
@@ -575,11 +573,9 @@ const LobbyManager = {
         if (STATE.lobby.pollingIntervalId) clearInterval(STATE.lobby.pollingIntervalId);
         if (STATE.lobby.leaderboardIntervalId) clearInterval(STATE.lobby.leaderboardIntervalId);
 
-        // Perform initial reliable loading
         this.refreshLobby();
         this.refreshLeaderboard();
 
-        // Establish long-term continuous sync fallbacks
         STATE.lobby.pollingIntervalId = setInterval(() => this.refreshLobby(), 30000);
         STATE.lobby.leaderboardIntervalId = setInterval(() => this.refreshLeaderboard(), 60000);
     },
@@ -617,14 +613,10 @@ const LobbyManager = {
         const list = DomCache.get('online-users-list');
         if (!list) return;
 
-        // CRITICAL FIX: Removed brittle CSS .style.display === 'none' guard trap
-        // Data model hydration must execute safely regardless of transient UI animation frames.
-
         try {
             const users = await ApiManager.request(`${API_BASE}/lobby`, {method: 'GET'});
             list.innerHTML = '';
 
-            // Exclude self cleanly using centralized STATE metrics
             const others = users.filter(u => u.username !== STATE.auth.currentUser);
 
             if (others.length === 0) {
@@ -704,7 +696,6 @@ const LobbyManager = {
     },
 
     updateSingleUserStatus(update) {
-        // FIX 3: Prevent infinite fetch loops triggered by own status broadcasts
         if (update.username === AuthManager.currentUser) return;
 
         Logger.info('Lobby Status update', update.username, update.status);
@@ -786,19 +777,27 @@ const ChallengeManager = {
 
             DomCache.get('challenge-text').textContent = `Challenge from ${message.sender}!`;
             UIManager.showModal('challenge-modal');
+
         } else if (message.type === 'CHALLENGE_RESPONSE') {
             UIManager.closeModal('waiting-modal');
             this.challengePending = false;
 
             if (message.status === 'ACCEPTED') {
-                GameManager.setupGame(message.roomId, message.sender);
+                const opponent = message.sender === AuthManager.currentUser
+                    ? message.receiver
+                    : message.sender;
+                GameManager.setupGame(message.roomId, opponent);
             } else if (message.status === 'REJECTED') {
                 UIManager.showToast(`${message.sender} declined.`, 'warning');
                 GameManager.setMachineState('IDLE');
+                GameManager.currentRoomId = null;
+                GameManager.opponentUser = null;
                 LobbyManager.refreshLobby();
             } else if (message.status === 'CANCELLED') {
                 UIManager.showToast('Challenge cancelled.', 'info');
                 GameManager.setMachineState('IDLE');
+                GameManager.currentRoomId = null;
+                GameManager.opponentUser = null;
                 LobbyManager.refreshLobby();
             }
         }
@@ -807,7 +806,6 @@ const ChallengeManager = {
     acceptChallenge() {
         if (!GameManager.currentRoomId || !GameManager.opponentUser) return;
 
-        // 1. Dispatch authoritative payload to the backend for server validation
         WebSocketManager.send('/app/challenge/reply', {
             sender: AuthManager.currentUser,
             receiver: GameManager.opponentUser,
@@ -816,11 +814,8 @@ const ChallengeManager = {
             type: 'CHALLENGE_RESPONSE'
         });
 
-        // 2. Clean up local modal UI overlay immediately
         UIManager.closeModal('challenge-modal');
         this.challengePending = false;
-
-        // Optional: Provide instant visual feedback to the accepting player
         UIManager.setStatus('Connecting to arena...', 'warning');
     },
 
@@ -866,7 +861,7 @@ const GameManager = {
     setMachineState: function (state) {
         STATE.game.machineState = state;
         STATE.game.engineState = state;
-        Logger.info(`Game machine altered boundaries to target state: ${state}`);
+        Logger.info(`Game machine state transitioned to: ${state}`);
     },
 
     setupGame: function (roomId, opponent) {
@@ -874,13 +869,19 @@ const GameManager = {
         STATE.game.currentRoomId = roomId;
         STATE.game.opponentUser = opponent;
         STATE.game.isGameOver = false;
+        STATE.game.tossSubmitted = false;
+        STATE.game.tossGameStartHandled = false;
         this.resetBoardState();
         UIManager.setRoomDisplay(STATE.auth.currentUser, opponent);
 
         UIManager.showScreen('game-container');
-
         DomCache.get('game-over-modal').style.display = 'none';
         WebSocketManager.subscribeRoom(roomId);
+
+        const tossBtn = document.getElementById('btn-toss');
+        if (tossBtn) tossBtn.style.display = 'inline-block';
+
+        UIManager.setStatus('Click 🪙 Flip Coin to start the match', 'info');
     },
 
     resetLocalFields: function () {
@@ -890,6 +891,8 @@ const GameManager = {
         STATE.game.opponentSign = null;
         STATE.game.isMyTurn = false;
         STATE.game.isGameOver = false;
+        STATE.game.tossSubmitted = false;
+        STATE.game.tossGameStartHandled = false;
         this.resetBoardState();
     },
 
@@ -910,9 +913,17 @@ const GameManager = {
 
     sendToss: function () {
         const roomId = STATE.game.currentRoomId;
-        if (!roomId || !WebSocketManager.isConnected) return;
+        if (!roomId || !WebSocketManager.isConnected || STATE.game.tossSubmitted) return;
+
+        STATE.game.tossSubmitted = true;
+
+        const tossBtn = document.getElementById('btn-toss');
+        if (tossBtn) tossBtn.style.display = 'none';
+
+        WebSocketManager.send(`/app/toss/${roomId}`, {});
+
         this.setMachineState('TOSS_PENDING');
-        UIManager.showModal('toss-modal');
+        UIManager.setStatus('Tossing coin...', 'warning');
     },
 
     submitTossChoice: function (choice) {
@@ -929,7 +940,7 @@ const GameManager = {
     },
 
     leaveGame() {
-        Logger.info('leaveGame triggered cleanly without timers');
+        Logger.info('leaveGame triggered cleanly');
         const roomId = this.currentRoomId;
 
         UIManager.closeModal('game-over-modal');
@@ -937,10 +948,10 @@ const GameManager = {
         UIManager.closeModal('waiting-modal');
         UIManager.closeModal('challenge-modal');
 
-        if (roomId && WebSocketManager.isConnected) {
-            // FIX 1: Correct path mismatch to match backend Controller
+        if (roomId && GameManager.opponentUser && WebSocketManager.isConnected) {
             WebSocketManager.send('/app/game/abort', {
                 sender: AuthManager.currentUser,
+                receiver: GameManager.opponentUser,
                 roomId: roomId,
                 type: 'GAME_ABORTED'
             });
@@ -953,8 +964,7 @@ const GameManager = {
         this.resetLocalFields();
         UIManager.showScreen('lobby-screen');
 
-        // FIX 2: Introduce 250ms transactional alignment delay.
-        // Gives PostgreSQL time to commit the STOMP abort before the REST query hits.
+        // Allow backend state to settle before polling lobby
         setTimeout(() => {
             LobbyManager.initializeLobbySynchronization();
         }, 250);
@@ -972,24 +982,30 @@ const GameManager = {
         if (!payload || !payload.type) return;
 
         switch (payload.type) {
-            /* case 'TOSS':
-                 UIManager.showModal('toss-modal');
-                 if (payload.winner === STATE.auth.currentUser) {
-                     DomCache.get('toss-result-title').textContent = 'You Won the Toss! 🎉';
-                     DomCache.get('toss-result-desc').textContent = 'Pick your side to begin the match.';
-                     DomCache.get('toss-winner-section').style.display = 'block';
-                     DomCache.get('toss-loser-section').style.display = 'none';
-                 } else {
-                     DomCache.get('toss-result-title').textContent = `${payload.winner} Won the Toss`;
-                     DomCache.get('toss-result-desc').textContent = 'Waiting for them to select X or O.';
-                     DomCache.get('toss-winner-section').style.display = 'none';
-                     DomCache.get('toss-loser-section').style.display = 'block';
-                 }
-                 break;*/
+            case 'TOSS': {
+                if (STATE.game.tossGameStartHandled) break;
+                STATE.game.tossGameStartHandled = true;
 
-            case 'TOSS_RESULT':
-                // Defensive: close modal if it was never shown
+                UIManager.showModal('toss-modal');
+
+                if (payload.winner === STATE.auth.currentUser) {
+                    DomCache.get('toss-result-title').textContent = 'You Won the Toss! 🎉';
+                    DomCache.get('toss-result-desc').textContent = 'Pick your side to begin the match.';
+                    DomCache.get('toss-winner-section').style.display = 'block';
+                    DomCache.get('toss-loser-section').style.display = 'none';
+                } else {
+                    DomCache.get('toss-result-title').textContent = `${payload.winner} Won the Toss`;
+                    DomCache.get('toss-result-desc').textContent = 'Waiting for them to select X or O.';
+                    DomCache.get('toss-winner-section').style.display = 'none';
+                    DomCache.get('toss-loser-section').style.display = 'block';
+                }
+                break;
+            }
+
+            case 'TOSS_RESULT': {
                 UIManager.closeModal('toss-modal');
+                const tossBtn = document.getElementById('btn-toss');
+                if (tossBtn) tossBtn.style.display = 'none';
 
                 if (payload.payload === STATE.auth.currentUser) {
                     STATE.game.mySign = 'X';
@@ -1004,10 +1020,11 @@ const GameManager = {
                 }
                 this.updateTurnDisplay();
                 break;
+            }
 
-            case 'MOVE_UPDATE':
+            case 'MOVE_UPDATE': {
                 const movePos = payload.boardPosition;
-                const player = payload.sender;
+                const player = payload.playerUsername;
                 const symbol = (player === STATE.auth.currentUser) ? STATE.game.mySign : STATE.game.opponentSign;
 
                 STATE.game.board[movePos] = symbol;
@@ -1018,36 +1035,47 @@ const GameManager = {
                     cell.style.pointerEvents = 'none';
                 }
 
-                if (!STATE.game.isGameOver) {
+                if (payload.gameState && payload.gameState !== 'ONGOING') {
+                    STATE.game.isGameOver = true;
+                    this.setMachineState('GAME_OVER');
+                    UIManager.showWinnerModal(payload.gameState);
+                } else if (!STATE.game.isGameOver) {
                     STATE.game.isMyTurn = (player !== STATE.auth.currentUser);
                     this.updateTurnDisplay();
                 }
                 break;
+            }
 
-            case 'GAME_OVER':
+            case 'GAME_OVER': {
                 STATE.game.isGameOver = true;
                 this.setMachineState('GAME_OVER');
                 UIManager.showWinnerModal(payload.payload);
                 break;
+            }
 
-            case 'GAME_ABORTED':
+            case 'GAME_ABORTED': {
                 STATE.game.isGameOver = true;
-                UIManager.showToast('Opponent left or aborted the match context.', 'warning');
+                UIManager.showToast('Opponent left or aborted the match.', 'warning');
                 this.cleanupGameState();
                 break;
+            }
 
-            case 'REMATCH_OFFER':
+            case 'REMATCH_OFFER': {
                 if (payload.sender !== STATE.auth.currentUser) {
                     UIManager.showToast(`${STATE.game.opponentUser} requested a rematch! Click Rematch to accept.`, 'info');
                 }
                 break;
+            }
 
-            case 'REMATCH_ACCEPTED':
+            case 'REMATCH_ACCEPTED': {
+                UIManager.closeModal('game-over-modal');
                 UIManager.showToast('Rematch started!', 'success');
                 this.setupGame(STATE.game.currentRoomId, STATE.game.opponentUser);
                 break;
+            }
         }
     },
+
     showWinnerModal(state) {
         const title = DomCache.get('go-title');
         const icon = DomCache.get('go-icon');

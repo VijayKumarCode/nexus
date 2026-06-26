@@ -36,7 +36,6 @@ public class GameService {
     private final Map<String, String> playerO = new ConcurrentHashMap<>();
     private final Map<String, String> tossWinner = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> rematchRequests = new ConcurrentHashMap<>();
-    // FIX NEXUS-022: Track last activity for TTL cleanup
     private final Map<String, Long> roomLastActivity = new ConcurrentHashMap<>();
 
     public boolean isRoomParticipant(String roomId,
@@ -61,7 +60,6 @@ public class GameService {
                         username.equals(players[1]));
     }
 
-    // FIX NEXUS-009: Ensure room is registered before toss authorization check
     public void ensureRoomRegistered(String roomId, String playerOne, String playerTwo) {
         roomPlayers.computeIfAbsent(roomId, k -> {
             log.info("Auto-registering room {} [{} vs {}]", roomId, playerOne, playerTwo);
@@ -133,11 +131,12 @@ public class GameService {
             return null;
         }
 
-        // FIX NEXUS-022: Update activity timestamp
+
         roomLastActivity.put(roomId, System.currentTimeMillis());
 
         char[] board = buildBoard(roomId);
         String winnerSymbol = checkWinner(board);
+
 
         if (winnerSymbol != null) {
             String winner = "X".equals(winnerSymbol) ? playerX.get(roomId) : playerO.get(roomId);
@@ -146,14 +145,35 @@ public class GameService {
             userService.incrementLosses(loser);
             incomingMove.setGameState("WINNER_" + winnerSymbol);
             log.info("Game over — room={} winner={}", roomId, winner);
+
+
+            resetUser(winner);
+            resetUser(loser);
+            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(winner, UserStatus.ONLINE));
+            messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(loser, UserStatus.ONLINE));
+
             currentTurn.remove(roomId);
             roomLastActivity.remove(roomId);
             return incomingMove;
         }
 
+
         if (isBoardFull(board)) {
             incomingMove.setGameState("DRAW");
             log.info("Draw — room={}", roomId);
+
+
+            String px = playerX.get(roomId);
+            String po = playerO.get(roomId);
+            if (px != null) {
+                resetUser(px);
+                messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(px, UserStatus.ONLINE));
+            }
+            if (po != null) {
+                resetUser(po);
+                messagingTemplate.convertAndSend("/topic/lobby.status", new PlayerStatus(po, UserStatus.ONLINE));
+            }
+
             currentTurn.remove(roomId);
             roomLastActivity.remove(roomId);
             return incomingMove;
@@ -238,7 +258,26 @@ public class GameService {
                     + roomId + " p1=" + request.getPlayerOne() + " p2=" + request.getPlayerTwo());
         }
 
-        // FIX NEXUS-024: Use ThreadLocalRandom instead of new Random()
+
+        if (tossWinner.containsKey(roomId)) {
+            log.info("Toss already completed for room {}", roomId);
+            String winner = tossWinner.get(roomId);
+            String[] players = roomPlayers.get(roomId);
+            if (players == null) {
+                throw new RuntimeException("roomPlayers missing for room=" + roomId);
+            }
+            String loser = winner.equals(players[0]) ? players[1] : players[0];
+
+            GameSystemMessage res = new GameSystemMessage();
+            res.setType("TOSS");
+            res.setWinner(winner);
+            res.setLoser(loser);
+            res.setPayload(winner);
+            res.setMessage(winner + " won the toss! Choose X or O.");
+            return res;
+        }
+
+
         boolean coin = ThreadLocalRandom.current().nextBoolean();
         String winner = coin ? request.getPlayerOne() : request.getPlayerTwo();
         String loser = coin ? request.getPlayerTwo() : request.getPlayerOne();
@@ -363,9 +402,10 @@ public class GameService {
             if (players != null) {
                 String opponent = username.equals(players[0]) ? players[1] : players[0];
 
-                // FIX NEXUS-014: Record win/loss on disconnect
-                userService.incrementWins(opponent);
-                userService.incrementLosses(username);
+                if (currentTurn.containsKey(roomId)) {
+                    userService.incrementWins(opponent);
+                    userService.incrementLosses(username);
+                }
 
                 GameSystemMessage abortMsg = new GameSystemMessage();
                 abortMsg.setType("GAME_ABORTED");
@@ -424,7 +464,7 @@ public class GameService {
         }
     }
 
-    // FIX NEXUS-022: Scheduled cleanup of abandoned rooms
+
     @Scheduled(fixedRate = 300_000) // Every 5 minutes
     public void cleanupAbandonedRooms() {
         long cutoff = System.currentTimeMillis() - 30 * 60 * 1000; // 30 minutes

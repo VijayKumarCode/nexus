@@ -38,6 +38,12 @@ public class AccountRecoveryService {
         if (!otpService.verifyOtp(email, otp)) {
             throw new RuntimeException("Invalid OTP");
         }
+        if (newPassword == null || newPassword.isBlank()) {
+            throw new RuntimeException("New password is required");
+        }
+        if (newPassword.length() < 8) {
+            throw new RuntimeException("Password must be at least 8 characters");
+        }
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found"));

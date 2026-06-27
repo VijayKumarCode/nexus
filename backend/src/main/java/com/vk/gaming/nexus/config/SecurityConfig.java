@@ -91,6 +91,7 @@ public class SecurityConfig {
                                 "/api/users/activate", "/api/users/resend-activation").permitAll()
                         .requestMatchers("/api/users/check-username").permitAll()
                         .requestMatchers("/api/users/health").permitAll()
+                        .requestMatchers("/api/recovery/**").permitAll()
                         .requestMatchers("/game-websocket/**").permitAll()
                         .anyRequest().authenticated()
                 )

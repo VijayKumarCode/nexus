@@ -876,11 +876,6 @@ const GameManager = {
 
         UIManager.showScreen('game-container');
         DomCache.get('game-over-modal').style.display = 'none';
-
-        // Clear turn indicator for fresh game / rematch (toss not done yet)
-        const turnIndicator = document.getElementById('turn-indicator');
-        if (turnIndicator) turnIndicator.innerHTML = '';
-
         WebSocketManager.subscribeRoom(roomId);
 
         const players = roomId.split('_');
@@ -970,6 +965,7 @@ const GameManager = {
     cleanupGameState() {
         WebSocketManager.unsubscribeRoom();
         this.resetLocalFields();
+        this.setMachineState('IDLE');
         UIManager.showScreen('lobby-screen');
 
         // Allow backend state to settle before polling lobby
@@ -996,10 +992,6 @@ const GameManager = {
 
                 const tossBtn = document.getElementById('btn-toss');
                 if (tossBtn) tossBtn.style.display = 'none';
-
-                // Clear turn indicator during toss phase
-                const turnIndicatorToss = document.getElementById('turn-indicator');
-                if (turnIndicatorToss) turnIndicatorToss.innerHTML = '';
 
                 UIManager.showModal('toss-modal');
 

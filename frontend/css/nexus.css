@@ -548,10 +548,22 @@ body::before {
 
 .toss-wrap  { text-align: center; padding: 0 24px 10px; }
 /* ─── TURN INDICATOR ─── */
+/* ─── TURN INDICATOR ─── */
 .turn-indicator {
-    margin: 0 24px 10px;
+    margin: 0 24px 0;
     text-align: center;
-    min-height: 28px;
+    min-height: 0;
+}
+
+.turn-indicator:empty {
+    margin: 0 24px 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.turn-indicator:not(:empty) {
+    margin: 0 24px 10px;
+    min-height: 0;
 }
 
 .turn-indicator .badge {

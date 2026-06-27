@@ -57,8 +57,8 @@ body::before {
 .bg-grid {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background-image:
-        linear-gradient(rgba(0,212,255,0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,212,255,0.04) 1px, transparent 1px);
+            linear-gradient(rgba(0,212,255,0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,212,255,0.04) 1px, transparent 1px);
     background-size: 60px 60px;
     mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 40%, transparent 100%);
 }
@@ -547,6 +547,50 @@ body::before {
 .status-warn    { background: rgba(255,201,64,0.08); border: 1px solid rgba(255,201,64,0.2); color: var(--gold); }
 
 .toss-wrap  { text-align: center; padding: 0 24px 10px; }
+/* ─── TURN INDICATOR ─── */
+.turn-indicator {
+    margin: 0 24px 10px;
+    text-align: center;
+    min-height: 28px;
+}
+
+.turn-indicator .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    border-radius: 100px;
+    font-family: 'Exo 2', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: all 0.3s ease;
+}
+
+.turn-indicator .badge.bg-success {
+    background: rgba(0, 230, 118, 0.15);
+    border: 1px solid rgba(0, 230, 118, 0.3);
+    color: var(--green);
+    box-shadow: 0 0 16px rgba(0, 230, 118, 0.2);
+}
+
+.turn-indicator .badge.bg-secondary {
+    background: rgba(90, 100, 120, 0.15);
+    border: 1px solid rgba(90, 100, 120, 0.3);
+    color: var(--muted);
+}
+
+@keyframes pulse-badge {
+    0%, 100% { opacity: 1; box-shadow: 0 0 16px rgba(0, 230, 118, 0.2); }
+    50% { opacity: 0.85; box-shadow: 0 0 24px rgba(0, 230, 118, 0.4); }
+}
+
+.turn-indicator .badge.animate-pulse {
+    animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+
 .board-wrap { padding: 16px 20px; }
 
 /* ─── GAME BOARD ─── */

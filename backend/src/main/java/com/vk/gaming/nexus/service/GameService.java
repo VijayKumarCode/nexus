@@ -433,7 +433,14 @@ public class GameService {
 
     public GameSystemMessage processRematch(String roomId, String username) {
         Set<String> requests = rematchRequests.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet());
+
+        // FIX: Auto-start rematch on first click — no waiting for second player
+        if (requests.contains("DONE")) {
+            return null; // Already processed (race condition guard)
+        }
+
         requests.add(username);
+        requests.add("DONE");
 
         String[] players = roomPlayers.get(roomId);
         if (players == null) {
@@ -445,23 +452,14 @@ public class GameService {
             }
         }
 
-        if (requests.size() >= 2) {
-            rematchRequests.remove(roomId);
-            resetGame(roomId);
-            registerRoom(roomId, players[0], players[1]);
+        resetGame(roomId);
+        registerRoom(roomId, players[0], players[1]);
 
-            GameSystemMessage msg = new GameSystemMessage();
-            msg.setType("REMATCH_ACCEPTED");
-            msg.setMessage("Rematch started! Play again.");
-            msg.setSender(username);
-            return msg;
-        } else {
-            GameSystemMessage msg = new GameSystemMessage();
-            msg.setType("REMATCH_OFFER");
-            msg.setSender(username);
-            msg.setMessage(username + " wants a rematch!");
-            return msg;
-        }
+        GameSystemMessage msg = new GameSystemMessage();
+        msg.setType("REMATCH_ACCEPTED");
+        msg.setMessage("Rematch started! Play again.");
+        msg.setSender(username);
+        return msg;
     }
 
 

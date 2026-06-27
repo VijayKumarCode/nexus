@@ -878,8 +878,17 @@ const GameManager = {
         DomCache.get('game-over-modal').style.display = 'none';
         WebSocketManager.subscribeRoom(roomId);
 
+        const players = roomId.split('_');
         const tossBtn = document.getElementById('btn-toss');
-        if (tossBtn) tossBtn.style.display = 'inline-block';
+        if (tossBtn) {
+            if (STATE.auth.currentUser === players[0]) {
+                tossBtn.style.display = 'inline-block';
+                UIManager.setStatus('Click 🪙 Flip Coin to start the match', 'info');
+            } else {
+                tossBtn.style.display = 'none';
+                UIManager.setStatus('Waiting for opponent to start...', 'info');
+            }
+        }
 
         UIManager.setStatus('Click 🪙 Flip Coin to start the match', 'info');
     },
@@ -914,14 +923,8 @@ const GameManager = {
     sendToss: function () {
         const roomId = STATE.game.currentRoomId;
         if (!roomId || !WebSocketManager.isConnected || STATE.game.tossSubmitted) return;
-
         STATE.game.tossSubmitted = true;
-
-        const tossBtn = document.getElementById('btn-toss');
-        if (tossBtn) tossBtn.style.display = 'none';
-
         WebSocketManager.send(`/app/toss/${roomId}`, {});
-
         this.setMachineState('TOSS_PENDING');
         UIManager.setStatus('Tossing coin...', 'warning');
     },
@@ -986,6 +989,9 @@ const GameManager = {
                 if (STATE.game.tossGameStartHandled) break;
                 STATE.game.tossGameStartHandled = true;
 
+                const tossBtn = document.getElementById('btn-toss');
+                if (tossBtn) tossBtn.style.display = 'none';
+
                 UIManager.showModal('toss-modal');
 
                 if (payload.winner === STATE.auth.currentUser) {
@@ -1006,6 +1012,8 @@ const GameManager = {
                 UIManager.closeModal('toss-modal');
                 const tossBtn = document.getElementById('btn-toss');
                 if (tossBtn) tossBtn.style.display = 'none';
+
+                UIManager.setStatus('');
 
                 if (payload.payload === STATE.auth.currentUser) {
                     STATE.game.mySign = 'X';
@@ -1038,7 +1046,7 @@ const GameManager = {
                 if (payload.gameState && payload.gameState !== 'ONGOING') {
                     STATE.game.isGameOver = true;
                     this.setMachineState('GAME_OVER');
-                    UIManager.showWinnerModal(payload.gameState);
+                    this.showWinnerModal(payload.gameState);
                 } else if (!STATE.game.isGameOver) {
                     STATE.game.isMyTurn = (player !== STATE.auth.currentUser);
                     this.updateTurnDisplay();
@@ -1049,7 +1057,7 @@ const GameManager = {
             case 'GAME_OVER': {
                 STATE.game.isGameOver = true;
                 this.setMachineState('GAME_OVER');
-                UIManager.showWinnerModal(payload.payload);
+                this.showWinnerModal(payload.payload);
                 break;
             }
 

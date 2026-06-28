@@ -168,6 +168,10 @@ const ApiManager = {
                 Logger.warn(`Retrying API call to: ${url}`);
                 return this.request(url, options, retries - 1, timeoutMs);
             }
+            // Normalize error for empty-body responses (403, 404, etc.)
+            if (error.status && !error.data) {
+                error.data = { error: `HTTP ${error.status} — ${error.status === 403 ? 'Forbidden' : 'Request failed'}` };
+            }
             throw error;
         }
     }

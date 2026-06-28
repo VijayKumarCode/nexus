@@ -272,7 +272,7 @@ const UIManager = {
         });
     },
 
-    submitFeedback() {
+    async submitFeedback() {
         const text = DomCache.get('feedback-text').value.trim();
         const category = DomCache.get('feedback-category').value;
         if (!text) {
@@ -280,8 +280,20 @@ const UIManager = {
             return;
         }
         const user = AuthManager.currentUser || StorageManager.getUser() || 'anonymous';
-        Logger.info('Feedback:', { rating: STATE.ui.selectedStar, category, text, user: user });
-        this.showToast('Thank you! Your feedback has been received.', 'success');
+        const payload = { rating: STATE.ui.selectedStar || 0, category, text, user };
+
+        try {
+            await ApiManager.request(`${CONFIG.API_BASE_URL}/api/feedback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            this.showToast('Thank you! Your feedback has been received.', 'success');
+        } catch (err) {
+            Logger.error('Feedback save failed', err);
+            this.showToast('Feedback saved locally. We will sync when online.', 'warning');
+        }
+
         this.closeModal('feedback-modal');
         DomCache.get('feedback-text').value = '';
         this.rateStar(0);

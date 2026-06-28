@@ -279,7 +279,8 @@ const UIManager = {
             this.showToast('Please write your feedback before sending.', 'warning');
             return;
         }
-        Logger.info('Feedback:', { rating: STATE.ui.selectedStar, category, text, user: STATE.auth.currentUser });
+        const user = AuthManager.currentUser || StorageManager.getUser() || 'anonymous';
+        Logger.info('Feedback:', { rating: STATE.ui.selectedStar, category, text, user: user });
         this.showToast('Thank you! Your feedback has been received.', 'success');
         this.closeModal('feedback-modal');
         DomCache.get('feedback-text').value = '';

@@ -17,6 +17,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -92,12 +93,17 @@ public class SecurityConfig {
                         .requestMatchers("/api/users/check-username").permitAll()
                         .requestMatchers("/api/users/health").permitAll()
                         .requestMatchers("/api/recovery/**").permitAll()
-                        .requestMatchers("/api/feedback/**").permitAll()
+                        .requestMatchers("/api/feedback", "/api/feedback/**").permitAll()
                         .requestMatchers("/game-websocket/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    @Bean
+    public WebSecurityCustomizer webSecurityCustomizer() {
+        return web -> web.ignoring().requestMatchers("/api/feedback/**", "/api/recovery/**", "/api/users/health");
     }
 
     @Bean

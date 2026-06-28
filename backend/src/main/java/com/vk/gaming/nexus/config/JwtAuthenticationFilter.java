@@ -28,6 +28,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final UserRepository userRepository;
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path.startsWith("/api/feedback")
+                || path.startsWith("/api/recovery")
+                || path.startsWith("/api/users/login")
+                || path.startsWith("/api/users/register")
+                || path.startsWith("/api/users/activate")
+                || path.startsWith("/api/users/resend-activation")
+                || path.startsWith("/api/users/check-username")
+                || path.startsWith("/api/users/health")
+                || path.startsWith("/game-websocket");
+    }
+
+    @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
             @NonNull HttpServletResponse response,

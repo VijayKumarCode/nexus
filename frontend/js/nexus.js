@@ -275,12 +275,24 @@ const UIManager = {
     async submitFeedback() {
         const text = DomCache.get('feedback-text').value.trim();
         const category = DomCache.get('feedback-category').value;
+        const rating = STATE.ui.selectedStar || 0;
+
+        // Validate all required fields before submission
+        if (rating === 0) {
+            this.showToast('Please rate your experience (1-5 stars) before submitting.', 'warning');
+            return;
+        }
+        if (!category) {
+            this.showToast('Please select a feedback category.', 'warning');
+            return;
+        }
         if (!text) {
             this.showToast('Please write your feedback before sending.', 'warning');
             return;
         }
+
         const user = AuthManager.currentUser || StorageManager.getUser() || 'anonymous';
-        const payload = { rating: STATE.ui.selectedStar || 0, category, text, user };
+        const payload = { rating, category, text, user };
 
         try {
             await ApiManager.request(`${CONFIG.API_BASE_URL}/api/feedback`, {

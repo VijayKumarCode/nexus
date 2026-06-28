@@ -6,7 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 @lombok.Data
-public class FeedbackRequest {
+public  class FeedbackRequest {
     private String user;
 
     @NotNull(message = "Rating is required")

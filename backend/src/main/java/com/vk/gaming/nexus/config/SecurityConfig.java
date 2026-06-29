@@ -103,11 +103,6 @@ public class SecurityConfig {
     }
 
     @Bean
-    public WebSecurityCustomizer webSecurityCustomizer() {
-        return web -> web.ignoring().requestMatchers("/api/feedback/**", "/api/recovery/**", "/api/users/health");
-    }
-
-    @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
@@ -117,7 +112,7 @@ public class SecurityConfig {
             origins = List.of("https://nexusgame.space", "https://www.nexusgame.space");
         }
 
-        config.setAllowedOriginPatterns(origins);
+        config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
